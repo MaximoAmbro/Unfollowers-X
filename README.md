@@ -1,151 +1,153 @@
-# ✦ X Non-Mutuals Unfollower
+# Unfollowers-X
 
-> Script de automatización de navegador en JavaScript puro para detectar y dejar de seguir cuentas que no te siguen de vuelta en X (Twitter), con un sistema anti-baneo integrado y una interfaz visual inyectada en el DOM.
+> Script de automatizacion del navegador en JavaScript puro para detectar y gestionar cuentas no-mutuas en X (Twitter), con overlay full-screen, escaneo invisible al usuario y sistema anti-baneo integrado.
 
----
-
-## Índice
-
-1. [Descripción del Proyecto](#descripción-del-proyecto)
-2. [Demostración](#demostración)
-3. [Tecnologías Utilizadas](#tecnologías-utilizadas)
-4. [Arquitectura del Script](#arquitectura-del-script)
-5. [Sistema Anti-Baneo: Gestión de Rate Limits](#sistema-anti-baneo-gestión-de-rate-limits)
-6. [Instrucciones de Uso](#instrucciones-de-uso)
-7. [Estructura del Proyecto](#estructura-del-proyecto)
-8. [Configuración Avanzada](#configuración-avanzada)
-9. [Limitaciones Conocidas](#limitaciones-conocidas)
-10. [Descargo de Responsabilidad](#descargo-de-responsabilidad)
+**Version:** 1.2
+**Tecnologia:** Vanilla JavaScript (ES2021+), sin dependencias externas
+**Landing page:** [maximoambro.github.io/Unfollowers-X](https://maximoambro.github.io/Unfollowers-X/)
 
 ---
 
-## Descripción del Proyecto
+## Indice
 
-**X Non-Mutuals Unfollower** es un script de automatización de navegador desarrollado en Vanilla JavaScript que permite a los usuarios de X (antes Twitter) identificar y gestionar las cuentas que siguen pero que no les siguen de vuelta —conocidas como *non-mutuals*—, todo desde la comodidad de la Consola de Desarrollador del navegador.
-
-### Problema que resuelve
-
-X no ofrece nativas ninguna funcionalidad para filtrar o ver qué cuentas de tu lista de "Siguiendo" no son mutuos. La única alternativa es revisar manualmente perfil por perfil, lo que resulta impráctico a partir de 200-300 seguidos.
-
-### Solución implementada
-
-El script inyecta un **panel flotante** directamente en el DOM de X, realiza un **escaneo automatizado** con scroll de toda la página `/following`, detecta los no-mutuos leyendo las etiquetas de "Te sigue" / "Follows you" en cada celda de usuario, y ofrece una interfaz para seleccionar individualmente qué cuentas dejar de seguir, con un robusto sistema de protección contra baneos.
-
-### Inspiración
-
-El proyecto está inspirado en el trabajo de **David Arroyo** y su famoso script de unfollow para Instagram, adaptando la misma filosofía —simplicidad, zero-dependencias, ejecución en consola— al ecosistema actual de X.
-
----
-
-## Demostración
-
-```
-┌──────────────────────────────────────┐
-│  ✦ X Non-Mutuals Unfollower          │
-├──────────────────────────────────────┤
-│  ✅ 47 no mutuas de 312 seguidos      │
-├──────────────────────────────────────┤
-│  47 detectadas        12 seleccionadas│
-├──────────────────────────────────────┤
-│  ☑  John Doe          @johndoe       │
-│  ☑  Jane Smith        @janesmith     │
-│  ☐  Tech Brand        @techbrand     │
-│  ☑  Random User       @randuser      │
-│  ...                                  │
-├──────────────────────────────────────┤
-│  [🔍 Escanear] [Sel. todo] [Desel.]  │
-│  [🚫 Unfollow seleccionadas] [⏹ Stop]│
-└──────────────────────────────────────┘
-```
-
-**Flujo de uso:**
-
-```
-/following → Pegar script → Escanear → Revisar lista → Seleccionar → Unfollow
-```
+1. [Descripcion del proyecto](#descripcion-del-proyecto)
+2. [Novedades de V1.2](#novedades-de-v12)
+3. [Tecnologias utilizadas](#tecnologias-utilizadas)
+4. [Arquitectura del script](#arquitectura-del-script)
+5. [Por que DOM Scraping y no API directa](#por-que-dom-scraping-y-no-api-directa)
+6. [Sistema anti-baneo: gestion de rate limits](#sistema-anti-baneo-gestion-de-rate-limits)
+7. [Instrucciones de uso](#instrucciones-de-uso)
+8. [Estructura del proyecto](#estructura-del-proyecto)
+9. [Configuracion avanzada](#configuracion-avanzada)
+10. [Historial de versiones](#historial-de-versiones)
+11. [Troubleshooting](#troubleshooting)
+12. [Descargo de responsabilidad](#descargo-de-responsabilidad)
 
 ---
 
-## Tecnologías Utilizadas
+## Descripcion del proyecto
 
-| Tecnología | Uso en el proyecto |
+X (antes Twitter) no ofrece ninguna funcionalidad nativa para filtrar que cuentas de tu lista de "Siguiendo" no te siguen de vuelta. Revisar esto manualmente es inviable a partir de unos pocos cientos de seguidos.
+
+**Unfollowers-X** resuelve este problema desde la Consola de Desarrollador del navegador. Al ejecutarse, inyecta un **overlay full-screen** que cubre completamente la interfaz de X, realiza un **escaneo automatizado** con scroll del DOM de la pagina `/following`, detecta los no-mutuos leyendo las etiquetas de "Te sigue" / "Follows you" en cada celda de usuario, y presenta una **tabla interactiva** con checkboxes para elegir exactamente quienes dejar de seguir antes de ejecutar ninguna accion.
+
+---
+
+## Novedades de V1.2
+
+| Caracteristica                  | V1.0          | V1.2                          |
+|---------------------------------|---------------|-------------------------------|
+| Visual durante escaneo          | Panel flotante con scroll visible | Overlay full-screen, scroll invisible |
+| Arquitectura del codigo         | Script monolitico | Modulos independientes (Detector, Scraper, Unfollower, UI) |
+| Indicador de progreso           | Texto en barra de estado | Contadores grandes, spinner CSS, barra de progreso |
+| Avatar de usuario               | Sin avatar    | Avatar de iniciales (sin carga de imagenes) |
+| Aviso de limite de sesion       | Al final del proceso | Visible en la tabla de resultados |
+| Landing page                    | No incluida   | GitHub Pages (index.html + styles.css) |
+| Timeout de seguridad            | No incluido   | 30 minutos maximo por sesion  |
+
+---
+
+## Tecnologias utilizadas
+
+| Tecnologia | Uso en el proyecto |
 |---|---|
-| **Vanilla JavaScript (ES2021+)** | Núcleo del script sin dependencias externas |
-| **DOM Manipulation API** | Lectura de `UserCell`, inyección del panel y CSS |
-| **Promises / async-await** | Gestión de delays asíncronos entre acciones |
-| **setTimeout / clearTimeout** | Motor del sistema de delays aleatorios anti-baneo |
-| **MutationObserver (indirecto)** | Detección del modal de confirmación de X |
-| **CSS Injected Styles** | Panel flotante con diseño fiel a la UI de X |
-| **MouseEvent API** | Simulación de hover y clics para comportamiento natural |
-| **DocumentFragment** | Renderizado eficiente de listas largas sin repintados innecesarios |
-
-**Sin frameworks. Sin dependencias. Sin instalación.** Solo JavaScript puro ejecutado en el contexto de la página.
+| Vanilla JavaScript (ES2021+) | Nucleo del script, sin dependencias externas |
+| DOM Manipulation API | Lectura de UserCell, inyeccion del overlay y CSS |
+| Promises / async-await | Coordinacion de delays y operaciones asincronas |
+| setTimeout | Motor del sistema de delays aleatorios anti-baneo |
+| MouseEvent API | Simulacion de hover antes de cada clic |
+| DocumentFragment | Renderizado eficiente de tablas largas |
+| CSS Animations | Spinner y transiciones del overlay |
+| HTML5 / CSS3 | Landing page estatica para GitHub Pages |
 
 ---
 
-## Arquitectura del Script
+## Arquitectura del script
 
-El script está organizado en **12 secciones modulares** encapsuladas en una IIFE (*Immediately Invoked Function Expression*) para no contaminar el scope global de la página:
+El script esta organizado en cuatro modulos independientes encapsulados en una IIFE:
 
 ```
-IIFE (función autoejecutable)
-│
-├── SECCIÓN 1  — CONFIG: parámetros ajustables por el usuario
-├── SECCIÓN 2  — STATE: objeto de estado global mutable
-├── SECCIÓN 3  — UTILS: sleep(), randomDelay(), escapeHtml(), usernameFromHref()
-│
-├── SECCIÓN 4  — DETECCIÓN
-│   ├── doesFollowBack(cell)    → lee el innerText buscando "Te sigue"/"Follows you"
-│   └── extractUserInfo(cell)   → extrae username y displayName del DOM
-│
-├── SECCIÓN 5  — ESCANEO
-│   └── scanFollowing()         → scroll automático + lectura de UserCells
-│
-├── SECCIÓN 6  — UNFOLLOW
-│   ├── waitAndConfirmModal()   → polling del modal [data-testid="confirmationSheetConfirm"]
-│   ├── countdownDelay()        → countdown visible en la UI
-│   ├── findFollowButton()      → localiza el botón con múltiples fallbacks
-│   └── startUnfollowProcess()  → bucle principal con scroll progresivo
-│
-├── SECCIÓN 7  — ESTILOS CSS: inyección de estilos con tema oscuro de X
-├── SECCIÓN 8  — PANEL UI: construcción del HTML del panel flotante
-├── SECCIÓN 9  — EVENTOS: binding de clicks y checkboxes
-├── SECCIÓN 10 — RENDER: renderUserList(), updateStatus(), counters
-├── SECCIÓN 11 — DRAGGABLE: panel arrastrable con mousedown/mousemove/mouseup
-└── SECCIÓN 12 — ENTRYPOINT: validación de URL e inicialización
+(function () {
+  // CONFIG     — parametros ajustables
+  // STATE      — estado global mutable
+  // Utilities  — sleep(), rnd(), esc(), usernameFromHref()
+
+  // Detector   — doesFollowBack(), extractInfo()
+  // Scraper    — run(onProgress)
+  // Unfollower — findBtn(), waitConfirm(), processQueue()
+  // UI         — mount(), showScanPhase(), showResultsPhase(),
+  //              showUnfollowPhase(), showDonePhase()
+
+  // Controllers — runScan(), runUnfollow()
+  // Init
+})();
 ```
 
-### Patrón de detección de no-mutuos
+### Flujo de ejecucion
 
-```javascript
-function doesFollowBack(userCell) {
-  const text = userCell.innerText || userCell.textContent || '';
-  return /te sigue\b/i.test(text) || /follows you\b/i.test(text);
-}
+```
+Init
+ │
+ ├─ UI.mount()          → crea el overlay en el DOM
+ │
+ └─ runScan()
+     │
+     ├─ UI.showScanPhase()          → muestra spinner y contadores
+     │
+     ├─ Scraper.run()               → scroll en background, lee UserCells
+     │   └─ Detector.extractInfo()  → extrae username y displayName
+     │   └─ Detector.doesFollowBack() → comprueba etiqueta "Te sigue"
+     │
+     ├─ UI.showResultsPhase()       → tabla con checkboxes
+     │   └─ [usuario selecciona]
+     │
+     └─ runUnfollow()
+         │
+         ├─ UI.showUnfollowPhase()        → barra de progreso
+         ├─ Unfollower.processQueue()     → scroll progresivo + unfollows
+         │   └─ Unfollower.waitConfirm()  → polling del modal de X
+         │   └─ UI.runCountdown()         → countdown visible por cada delay
+         │
+         └─ UI.showDonePhase()            → resumen final
 ```
 
-X inyecta dinámicamente una etiqueta de texto dentro del `[data-testid="UserCell"]` cuando el usuario nos sigue de vuelta. Leer `innerText` del elemento completo es más resiliente que buscar por clases CSS, ya que X cambia sus nombres de clases frecuentemente con cada deploy.
+### Tecnica: overlay como mascara visual
 
-### Estrategia de scroll progresivo para unfollow
+El overlay tiene `position: fixed; inset: 0; z-index: 9999999`. Cubre el 100% del viewport pero no interfiere con `window.scrollBy()`, que opera sobre el documento subyacente. Esto permite que el Scraper desplace la pagina de X para cargar mas usuarios en la lista virtualizada, mientras el usuario ve solo los contadores del overlay y no el scroll.
 
-Para evitar referencias inválidas al DOM (X virtualiza la lista eliminando nodos fuera de la vista), el proceso de unfollow **no almacena referencias a elementos durante el escaneo**. En su lugar, al comenzar el unfollow:
+### Tecnica: scroll progresivo en el Unfollower
 
-1. Vuelve al inicio de la página
-2. Hace scroll progresivo buscando activamente los `UserCell` de los usuarios pendientes
-3. En cuanto encuentra uno, lo procesa inmediatamente
-4. Continúa el scroll para los siguientes
-
-Este patrón es compatible con listas virtualizadas de cualquier longitud.
+En lugar de guardar referencias a elementos del DOM durante el escaneo (que quedan invalidadas por la virtualizacion de la lista de X), el Unfollower hace scroll desde el inicio de la pagina buscando activamente cada `[data-testid="UserCell"]` en el momento de procesarlo. Esta tecnica es compatible con listas virtualizadas de cualquier longitud.
 
 ---
 
-## Sistema Anti-Baneo: Gestión de Rate Limits
+## Por que DOM Scraping y no API directa
 
-Esta es la parte más crítica del script. X (como Instagram y otras redes) implementa sistemas de detección de comportamiento automatizado que pueden resultar en restricciones de cuenta (shadowban, suspensión temporal de la función de seguir/dejar de seguir o, en casos extremos, suspensión de cuenta).
+Una pregunta frecuente al ver este tipo de herramienta es: "por que no usar la API de X directamente?". La respuesta tiene tres razones tecnicas:
 
-### Capas de protección implementadas
+### 1. Headers dinamicos rotativos
 
-#### 1. Delays aleatorios de larga duración
+Los endpoints internos de X (como `https://x.com/i/api/graphql/...`) autentican cada peticion con tokens y headers que rotan por request. Interceptarlos desde JavaScript del navegador sin ser detectado es practicamente imposible con las medidas anti-bot que X tiene en produccion.
+
+### 2. CSP bloquea fetch() directo
+
+La politica Content Security Policy de X incluye directivas `connect-src` que impiden hacer `fetch()` a sus endpoints desde scripts inyectados. Esto bloquea tanto bookmarklets como scripts ejecutados desde la consola cuando intentan hacer llamadas de red directas a los dominios de X.
+
+### 3. API oficial con restricciones
+
+La API oficial de X requiere aprobacion de cuenta de desarrollador, tiene rate limits muy estrictos en el tier gratuito, y cualquier automatizacion de gestion de follows/unfollows requiere permisos especificos que no son aprobados facilmente.
+
+### La solucion: DOM Scraping con autenticacion del browser
+
+El DOM de la pagina `/following` ya esta cargado y autenticado en el contexto del navegador del usuario. Leer ese DOM con `querySelectorAll('[data-testid="UserCell"]')` no requiere ningun header ni token adicional. El browser ya tiene la sesion. El script solo lee lo que el browser ya descargo.
+
+---
+
+## Sistema anti-baneo: gestion de rate limits
+
+Esta es la parte mas critica del proyecto. X tiene sistemas de deteccion de comportamiento automatizado que pueden resultar en restricciones de cuenta.
+
+### Nivel 1: Delays aleatorios de larga duracion
 
 ```javascript
 const CONFIG = {
@@ -153,221 +155,234 @@ const CONFIG = {
   DELAY_MAX_MS: 85_000,  // 85 segundos
 };
 
-function randomDelay(min, max) {
-  const ms = Math.floor(Math.random() * (max - min + 1)) + min;
-  return sleep(ms);
-}
+const totalMs = rnd(CONFIG.DELAY_MIN_MS, CONFIG.DELAY_MAX_MS);
 ```
 
-**Por qué funciona:** Un bot opera con intervalos matemáticamente regulares (ej: cada 5 segundos exactos). Un humano nunca es periódico. Los algoritmos de detección buscan periodicidad estadística en las acciones. Al usar rangos amplios con distribución uniforme aleatoria, el perfil de actividad del script imita el de un usuario humano lento y deliberado.
+Un bot opera con intervalos matematicamente regulares. Los algoritmos de deteccion buscan periodicidad estadistica. Un rango amplio con distribucion uniforme aleatoria hace que el perfil de actividad sea estadisticamente indistinguible del de un usuario humano lento y deliberado.
 
-**Por qué 35-85 segundos:** Los rate limits de X para acciones de unfollow son más estrictos que los de otras acciones. Valores por debajo de 30 segundos aumentan significativamente el riesgo de detección. El rango 35-85s ofrece el equilibrio entre seguridad y velocidad práctica.
+Por que 35-85 segundos: valores por debajo de 30 segundos aumentan significativamente el riesgo de deteccion en acciones de unfollow, que son monitoreadas con mayor atencion que otras acciones.
 
-#### 2. Límite de sesión por lotes
+### Nivel 2: Limite de sesion por lotes
 
 ```javascript
 const CONFIG = {
-  MAX_UNFOLLOWS_PER_SESSION: 22,
+  MAX_UNFOLLOWS: 22,
 };
 
-if (state.unfollowsThisSession >= CONFIG.MAX_UNFOLLOWS_PER_SESSION) {
-  updateStatus('⛔ LÍMITE ALCANZADO. Espera 2-3h antes de continuar.');
-  return;
+if (state.unfollowCount >= CONFIG.MAX_UNFOLLOWS) {
+  return { done, limitReached: true };
 }
 ```
 
-**Por qué funciona:** Los sistemas anti-spam de X analizan la velocidad de acciones por ventana temporal. Realizar 100 unfollows en una hora es una señal de alerta inequívoca. Al limitar a ~22 por sesión y requerir esperas de horas entre sesiones, el script mantiene la actividad dentro de los umbrales que X considera "normal".
+Los sistemas anti-spam analizan la velocidad de acciones por ventana temporal. 22 unfollows con delays de 35-85 segundos equivale a una sesion de aproximadamente 15-30 minutos, que es un patron de comportamiento humano normal.
 
-**Recomendación de uso seguro:**
-- Máximo 1-2 sesiones por día
+Recomendacion de uso seguro:
+- Maximo 1-2 sesiones por dia
 - Esperar al menos 3 horas entre sesiones
-- No exceder ~40-50 unfollows por día en total
+- No superar 40-50 unfollows en total por dia
 
-#### 3. Simulación de comportamiento humano
+### Nivel 3: Simulacion de comportamiento humano
 
 ```javascript
 // Scroll suave al elemento antes de interactuar
 cell.scrollIntoView({ behavior: 'smooth', block: 'center' });
-await sleep(600 + Math.random() * 400);
+await sleep(500 + Math.random() * 400);
 
-// Hover antes del clic (como lo haría un humano)
-followBtn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-await sleep(300 + Math.random() * 200);
+// Hover antes del clic
+btn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+await sleep(250 + Math.random() * 150);
 
-// Clic principal
-followBtn.click();
+btn.click();
 ```
 
-Los bots típicamente hacen clic directo sobre elementos sin eventos previos de mouse. El script simula el flujo completo: scroll → hover → pausa variable → clic, con tiempos aleatorios en cada micro-acción.
+Los bots hacen clic directo sin eventos previos de mouse. El script simula el flujo completo: scroll al elemento, hover con pausa variable, luego clic, con tiempos aleatorios en cada micro-accion.
 
-#### 4. Verificación del modal de confirmación
-
-X muestra un diálogo de confirmación (`[data-testid="confirmationSheetConfirm"]`) antes de ejecutar el unfollow. El script espera activamente este modal con polling cada 150ms (hasta 3.5 segundos) antes de confirmarlo, en lugar de asumir que ya está presente, lo que evita errores silenciosos.
-
----
-
-## Instrucciones de Uso
-
-### Método recomendado: Consola de Desarrollador
-
-**Este es el único método garantizado.** Los bookmarklets son bloqueados por la política CSP de X en navegadores modernos.
-
-**Paso 1 — Preparación**
-
-1. Inicia sesión en tu cuenta de X
-2. Navega a la página de "Siguiendo" de tu perfil:
-   ```
-   https://x.com/TU_USERNAME/following
-   ```
-3. Espera a que la página cargue completamente
-
-**Paso 2 — Abrir DevTools**
-
-| Sistema Operativo | Atajo |
-|---|---|
-| Windows / Linux | `F12` o `Ctrl + Shift + I` |
-| macOS | `Cmd + Option + I` |
-
-Luego selecciona la pestaña **"Console"** (Consola).
-
-**Paso 3 — Ejecutar el script**
-
-1. Abre el archivo `unfollower.js` de este repositorio
-2. Selecciona todo el contenido (`Ctrl+A` / `Cmd+A`)
-3. Pégalo en la consola del navegador
-4. Presiona `Enter`
-
-Verás aparecer el panel flotante en la esquina superior derecha de la pantalla.
-
-**Paso 4 — Escanear**
-
-1. Haz clic en el botón **"🔍 Escanear"**
-2. El script comenzará a hacer scroll automático por tu lista de seguidos
-3. Espera a que el escaneo termine (puede tardar varios minutos dependiendo del número de seguidos)
-4. Al finalizar verás el mensaje "✅ Escaneo completo"
-
-**Paso 5 — Seleccionar y hacer unfollow**
-
-1. Revisa la lista de cuentas no mutuas detectadas
-2. Marca con checkbox las que deseas dejar de seguir
-   - Usa **"Sel. todo"** para seleccionar todas
-   - Desmarca individualmente las que quieras mantener
-3. Haz clic en **"🚫 Unfollow seleccionadas"**
-4. El panel mostrará un countdown entre cada acción
-5. Al finalizar verás el resumen de la sesión
-
-> **Importante:** No cierres la pestaña del navegador ni navegues a otra página mientras el proceso está en ejecución.
-
-### Método alternativo: Bookmarklet
-
-> ⚠️ **Limitación:** X usa Content Security Policy (CSP) estricta que bloquea la ejecución de `javascript:` bookmarklets en Chrome 98+, Firefox 100+ y Safari 15.4+. Este método puede no funcionar.
-
-Si quieres intentarlo:
-1. Crea un nuevo marcador en tu navegador
-2. En el campo "URL", pega el contenido del archivo `bookmarklet.js` (la línea que empieza con `javascript:`)
-3. Guarda el marcador
-4. Navega a `/following` y haz clic en el marcador
-
----
-
-## Estructura del Proyecto
-
-```
-x-non-mutuals-unfollower/
-│
-├── unfollower.js       # Script principal — código limpio y comentado
-│                       # (12 secciones modulares, ~450 líneas)
-│
-├── bookmarklet.js      # Versión compacta para bookmarklet + notas de uso
-│                       # (incluye explicación de limitaciones CSP)
-│
-└── README.md           # Esta documentación
-```
-
----
-
-## Configuración Avanzada
-
-El objeto `CONFIG` al inicio de `unfollower.js` permite personalizar el comportamiento del script:
+### Nivel 4: Delays variables durante el scroll del escaneo
 
 ```javascript
 const CONFIG = {
-  // Delay mínimo entre unfollows (ms) — NO bajar de 20000
-  DELAY_MIN_MS: 35_000,
-
-  // Delay máximo entre unfollows (ms)
-  DELAY_MAX_MS: 85_000,
-
-  // Máximo de unfollows por sesión — NO superar 25
-  MAX_UNFOLLOWS_PER_SESSION: 22,
-
-  // Delay entre scrolls durante el escaneo (ms)
-  SCROLL_DELAY_MS: 1_800,
-
-  // Píxeles por scroll
-  SCROLL_STEP_PX: 600,
-
-  // Scrolls sin cambio → fin de lista
-  MAX_UNCHANGED_SCROLLS: 5,
+  SCROLL_MIN_MS: 500,
+  SCROLL_MAX_MS: 2_000,
 };
 ```
 
-> ⚠️ **Advertencia:** Reducir `DELAY_MIN_MS` por debajo de 20 segundos o aumentar `MAX_UNFOLLOWS_PER_SESSION` por encima de 25 aumenta significativamente el riesgo de recibir restricciones en la cuenta.
+El scroll del escaneo tambien usa delays aleatorios para evitar un patron de scrolling mecanico y regular que podria ser detectado.
+
+### Nivel 5: Timeout de sesion
+
+```javascript
+const CONFIG = {
+  SESSION_TIMEOUT_MS: 30 * 60 * 1_000,  // 30 minutos
+};
+```
+
+Si el script lleva mas de 30 minutos activo, se detiene automaticamente. Esto previene sesiones excesivamente largas que podrian llamar la atencion de los sistemas de monitoreo.
 
 ---
 
-## Limitaciones Conocidas
+## Instrucciones de uso
 
-| Limitación | Descripción |
+### Metodo recomendado: Consola de DevTools
+
+**Este es el unico metodo garantizado.** Los bookmarklets son bloqueados por la politica CSP de X en navegadores modernos (Chrome 98+, Firefox 100+).
+
+**Paso 1 — Navegar a la pagina de seguidos**
+
+```
+https://x.com/TU_USERNAME/following
+```
+
+**Paso 2 — Abrir DevTools**
+
+| Sistema | Atajo |
 |---|---|
-| **Dependencia del DOM de X** | X actualiza su DOM frecuentemente. Si cambian los `data-testid` ("UserCell", "confirmationSheetConfirm"), el script necesitará actualización. |
-| **Idioma de la UI** | El script detecta "Te sigue" (español) y "Follows you" (inglés). Otros idiomas pueden requerir añadir sus patrones a `doesFollowBack()`. |
-| **Cuentas privadas** | Las cuentas privadas pueden no mostrar el modal de confirmación; el script maneja este caso con timeout. |
-| **Lista virtualizada** | X usa virtualización para listas grandes. El escaneo puede perder cuentas si el scroll es muy rápido. Aumentar `SCROLL_DELAY_MS` mejora la precisión. |
-| **CSP en bookmarklet** | Los navegadores modernos bloquean `javascript:` bookmarklets en sitios con CSP estricta como X. |
-| **Sesión requerida** | El script necesita que el usuario esté autenticado; no accede a la API oficial de X. |
+| Windows / Linux | F12 o Ctrl + Shift + I |
+| macOS | Cmd + Option + I |
+
+Seleccionar la pestana **Console**.
+
+**Paso 3 — Ejecutar el script**
+
+Abrir [unfollowers-x.js](unfollowers-x.js), seleccionar todo el contenido, pegarlo en la consola y presionar Enter.
+
+**Paso 4 — Usar el overlay**
+
+1. El overlay aparece automaticamente e inicia el escaneo
+2. Esperar a que el contador se detenga (fin de la lista)
+3. Revisar la tabla de no-mutuos detectados
+4. Marcar/desmarcar con los checkboxes individuales
+5. Usar "Seleccionar todo" / "Deseleccionar todo" segun necesidad
+6. Hacer clic en **Dejar de seguir seleccionados**
+7. Esperar al proceso (el countdown muestra el tiempo restante)
+8. Hacer clic en **Cerrar** al finalizar
+
+No cerrar la pestana del navegador ni navegar a otra URL mientras el proceso esta activo.
 
 ---
 
-## Descargo de Responsabilidad
+## Estructura del proyecto
 
-> **AVISO LEGAL Y DE RESPONSABILIDAD**
+```
+Unfollowers-X/
+│
+├── unfollowers-x.js       Script principal — comentado y modular
+├── unfollowers-x.min.js   Version compacta para bookmarklet
+├── index.html             Landing page para GitHub Pages
+├── styles.css             Estilos de la landing page
+└── README.md              Esta documentacion
+```
 
-Este proyecto es de **carácter puramente educativo** y fue desarrollado como muestra de habilidades técnicas en JavaScript, automatización del DOM y técnicas de web scraping para un portfolio profesional.
+---
 
-**El uso de este script:**
+## Configuracion avanzada
 
-- Puede violar los [Términos de Servicio de X (Twitter)](https://twitter.com/en/tos), concretamente las cláusulas sobre automatización y uso de herramientas de terceros no autorizadas.
-- Puede resultar en restricciones temporales o permanentes de tu cuenta de X.
-- Es responsabilidad **exclusiva del usuario** que decida ejecutarlo.
+El objeto `CONFIG` al inicio de `unfollowers-x.js` permite ajustar el comportamiento:
 
-**El autor de este script:**
+```javascript
+const CONFIG = {
+  // Delay minimo entre unfollows (ms) — NO bajar de 20000
+  DELAY_MIN_MS: 35_000,
+
+  // Delay maximo entre unfollows (ms)
+  DELAY_MAX_MS: 85_000,
+
+  // Maximo de unfollows por sesion — NO superar 25
+  MAX_UNFOLLOWS: 22,
+
+  // Delay minimo entre scrolls del escaneo (ms)
+  SCROLL_MIN_MS: 500,
+
+  // Delay maximo entre scrolls del escaneo (ms)
+  SCROLL_MAX_MS: 2_000,
+
+  // Pixeles por scroll durante el escaneo
+  SCROLL_STEP_PX: 700,
+
+  // Scrolls consecutivos sin cambio -> fin de lista
+  MAX_STUCK_SCROLLS: 6,
+
+  // Timeout maximo de toda la sesion (ms) — 30 minutos
+  SESSION_TIMEOUT_MS: 30 * 60 * 1_000,
+};
+```
+
+Advertencia: reducir `DELAY_MIN_MS` por debajo de 20 segundos o aumentar `MAX_UNFOLLOWS` por encima de 25 incrementa significativamente el riesgo de restricciones en la cuenta.
+
+---
+
+## Historial de versiones
+
+### v1.2 (actual)
+- Overlay full-screen que oculta el scroll de X al usuario
+- Arquitectura modular: Detector, Scraper, Unfollower, UI
+- Avatar de iniciales (sin carga de imagenes externas)
+- Aviso en la tabla cuando hay mas no-mutuos que el limite de sesion
+- Timeout de seguridad de 30 minutos
+- Landing page en GitHub Pages (index.html + styles.css)
+- Eliminacion de emojis en todo el codigo
+
+### v1.0
+- Panel flotante sobre el feed de X
+- Escaneo con scroll visible
+- Checkboxes y botones Seleccionar todo / Deseleccionar todo
+- Delays anti-baneo de 35-85 segundos
+- Limite de 22 unfollows por sesion
+
+---
+
+## Troubleshooting
+
+**El overlay no aparece**
+Verificar que el script se pego completo en la consola, incluyendo el ultimo `})();`. Buscar errores en rojo en la consola de DevTools.
+
+**El escaneo termina con 0 usuarios**
+Asegurarse de estar en la URL `/following` de tu propio perfil, no en la de otro usuario. X a veces requiere estar logueado y en el perfil propio.
+
+**El boton de unfollow no se encuentra**
+X actualiza su frontend frecuentemente. Si el `data-testid` del boton cambia, la funcion `findBtn()` tiene tres estrategias de fallback adicionales. En caso de persistir, abrir un issue en GitHub con la estructura del DOM actualizada.
+
+**El modal de confirmacion no aparece**
+En algunos casos X no muestra el modal (cuentas privadas o variantes de UI que X testea por segmentos de usuarios). El script maneja este caso con un timeout de 4 segundos: si el modal no aparece, continua al siguiente usuario.
+
+**El script se detiene antes de terminar**
+Verificar si se alcanzo el limite de sesion (22 unfollows) o el timeout de 30 minutos. Esperar al menos 2-3 horas antes de ejecutar una nueva sesion.
+
+**La pagina de X no carga los seguidos**
+X usa lazy loading. El script espera hasta 2 segundos entre scrolls para que el DOM se estabilice. Si la conexion es lenta, aumentar `SCROLL_MAX_MS` en la configuracion.
+
+---
+
+## Descargo de responsabilidad
+
+Este proyecto es de **caracter puramente educativo** y fue desarrollado como muestra de habilidades tecnicas en JavaScript, automatizacion del DOM y tecnicas de web scraping para un portfolio profesional.
+
+El uso de este script:
+
+- Puede violar los [Terminos de Servicio de X (Twitter)](https://twitter.com/en/tos), en particular las clausulas sobre automatizacion y uso de herramientas de terceros no autorizadas.
+- Puede resultar en restricciones temporales o permanentes de la cuenta de X.
+- Es responsabilidad exclusiva del usuario que decida ejecutarlo.
+
+El autor de este script:
 
 - No se hace responsable de ninguna consecuencia derivada del uso de esta herramienta.
-- No alienta el uso masivo o malicioso de automatizaciones en plataformas de terceros.
-- Proporciona este código únicamente con fines demostrativos de técnicas de desarrollo front-end.
-
-**Recomendaciones:**
-
-- Úsalo con moderación y respetando los límites descritos en este README.
-- Nunca uses este tipo de herramientas para prácticas de spam o acoso.
-- Consulta siempre los Términos de Servicio de la plataforma antes de usar cualquier automatización.
+- No alienta el uso masivo, comercial ni malicioso de automatizaciones en plataformas de terceros.
+- Proporciona este codigo unicamente con fines demostrativos de tecnicas de desarrollo front-end.
 
 ---
 
-## Habilidades Técnicas Demostradas
+## Habilidades tecnicas demostradas
 
-Este proyecto sirve como demostración práctica de las siguientes competencias:
+Este proyecto es una demostracion practica de las siguientes competencias:
 
-- **Vanilla JavaScript avanzado** — async/await, Promises, closures, IIFE pattern
-- **Manipulación del DOM** — Lectura, traversal, inyección de nodos y estilos
-- **Web Scraping en el navegador** — Extracción de datos de SPA renderizadas dinámicamente
-- **Automatización del navegador** — Simulación de eventos de usuario (MouseEvent, scroll, click)
-- **Rate Limiting y Anti-Detección** — Implementación de delays aleatorios y límites por sesión
-- **UI/UX en runtime** — Inyección de interfaces completas (HTML + CSS) sin frameworks
-- **Arquitectura modular** — Separación clara de responsabilidades en un script monolítico
-- **Manejo asíncrono complejo** — Coordinación de múltiples operaciones con timeouts y polling
+- Vanilla JavaScript avanzado — async/await, Promises, closures, IIFE, modulos objeto
+- Manipulacion del DOM — lectura, traversal, inyeccion de nodos, CSS en runtime
+- Web Scraping en el navegador — extraccion de datos de SPA renderizadas dinamicamente
+- Automatizacion del navegador — simulacion de MouseEvent, scroll programatico
+- Rate Limiting y anti-deteccion — delays aleatorios, limites por sesion, simulacion de comportamiento humano
+- UI/UX en runtime — inyeccion de interfaces completas (HTML + CSS) sin frameworks
+- Arquitectura modular — separacion de responsabilidades en un script sin bundler
+- Manejo asincrono complejo — coordinacion de bucles con timeouts y polling
 
 ---
 
-*Desarrollado como proyecto de portfolio · Vanilla JavaScript · DOM Automation · 2024*
+*Desarrollado como proyecto de portfolio — Vanilla JavaScript — DOM Automation — 2024*
