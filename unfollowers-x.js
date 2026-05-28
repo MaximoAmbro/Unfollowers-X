@@ -1,431 +1,654 @@
 /**
- * =============================================================
- *  Unfollowers-X  v1.2
- *  Vanilla JavaScript  —  Sin dependencias externas
- * =============================================================
+ * =================================================================
+ *  Unfollowers-X  v2.0
+ *  Dashboard Bidireccional: Unfollower + Auto-Follow
+ *  Vanilla JavaScript — Sin dependencias externas
+ * =================================================================
  *
- *  Detecta y gestiona cuentas no-mutuas en X (Twitter) desde
- *  la Consola de Desarrollador del navegador.
- *
- *  Arquitectura V1.2:
- *  - Overlay full-screen: el usuario ve solo la UI del script
- *  - DOM Scraping en background: X scrollea invisible al usuario
- *  - Modulos independientes: Detector, Scraper, Unfollower, UI
+ *  Modulo Unfollower : x.com/TU_USUARIO/following
+ *  Modulo Auto-Follow: x.com/@USUARIO/followers
  *
  *  USO:
- *  1. Navegar a https://x.com/TU_USERNAME/following
- *  2. Abrir DevTools (F12) -> Console
+ *  1. Navegar a la pagina correcta segun el modulo deseado
+ *  2. Abrir DevTools (F12) → Console
  *  3. Pegar este script completo y presionar Enter
  *
  *  ADVERTENCIA: El uso de automatizaciones puede infringir los
  *  Terminos de Servicio de X. Usar bajo responsabilidad propia.
- * =============================================================
+ * =================================================================
  */
 
 (function () {
   'use strict';
 
-  // =============================================================
+  // =================================================================
   // CONFIGURACION
-  // Ajustar segun tolerancia al riesgo. No bajar DELAY_MIN_MS
-  // por debajo de 20000 ni subir MAX_UNFOLLOWS por encima de 25.
-  // =============================================================
-  const CONFIG = {
-    DELAY_MIN_MS:       35_000,  // 35s minimo entre unfollows
-    DELAY_MAX_MS:       85_000,  // 85s maximo entre unfollows
-    MAX_UNFOLLOWS:      22,      // limite de seguridad por sesion
-    SCROLL_MIN_MS:      500,     // delay minimo entre scrolls del escaneo
-    SCROLL_MAX_MS:      2_000,   // delay maximo entre scrolls del escaneo
-    SCROLL_STEP_PX:     700,     // pixeles por cada scroll
-    MAX_STUCK_SCROLLS:  6,       // scrolls sin cambio de altura -> fin de lista
-    SESSION_TIMEOUT_MS: 30 * 60 * 1_000,  // 30 min de timeout total
+  // =================================================================
+  const CFG = {
+    // Unfollower — delays entre acciones (ms, con decimales precisos)
+    UF_DELAY_MIN:  10_230,          // 10.23 segundos
+    UF_DELAY_MAX:  64_320,          // 64.32 segundos
+    UF_CD_EVERY:   10,              // cooldown cada N unfollows
+    UF_CD_MIN:     4  * 60 * 1_000, // 4 minutos
+    UF_CD_MAX:     10 * 60 * 1_000, // 10 minutos
+
+    // Auto-Follow — delays entre acciones
+    AF_DELAY_MIN:      45_000,
+    AF_DELAY_MAX:      95_000,
+    AF_CD_EVERY:       10,
+    AF_CD_MIN:         4  * 60 * 1_000,
+    AF_CD_MAX:         10 * 60 * 1_000,
+    AF_MAX_PER_BATCH:  20,
+    AF_BATCH_WAIT:     2 * 60 * 60 * 1_000, // 2 horas entre lotes
+    AF_CHUNK_SIZE:     250,
+
+    // Scroll
+    SC_MIN:       500,
+    SC_MAX:       2_000,
+    SC_STEP:      700,
+    SC_MAX_STUCK: 6,
+
+    // Timeout global de sesion
+    TIMEOUT: 2 * 60 * 60 * 1_000,
   };
 
-  // =============================================================
+  // =================================================================
   // ESTADO GLOBAL
-  // =============================================================
-  const state = {
-    /** @type {Array<{username: string, displayName: string}>} */
-    nonMutuals: [],
-
-    /** Usernames marcados con checkbox para unfollow */
-    selected: new Set(),
-
-    /** @type {'idle'|'scanning'|'results'|'unfollowing'|'done'} */
-    phase: 'idle',
-
-    unfollowCount: 0,
-    stopFlag: false,
+  // =================================================================
+  const S = {
     sessionStart: null,
+    activeModule: null,  // 'unfollow' | 'autofollow' | null
+    running:      false,
+    stop:         false,
+
+    uf: {
+      nonMutuals: [],
+      selected:   new Set(),
+      count:      0,
+      phase:      'idle', // idle|scanning|results|running|done
+    },
+
+    af: {
+      candidates:  [],
+      selected:    new Set(),
+      seen:        new Set(),  // usernames vistos en todos los chunks
+      count:       0,
+      phase:       'idle',     // idle|loading|results|running|done
+      scanDone:    false,      // true si se llego al final de la lista
+      stuckCount:  0,
+      lastHeight:  0,
+      lastBatchEnd: null,      // timestamp del ultimo lote completado
+    },
   };
 
-  // =============================================================
+  // =================================================================
   // UTILIDADES
-  // =============================================================
+  // =================================================================
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-  /** Entero aleatorio entre min y max inclusive */
-  const rnd = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+  /** Decimal aleatorio entre a y b */
+  const rnd = (a, b) => Math.random() * (b - a) + a;
 
-  /** Escapa HTML para prevenir XSS al inyectar datos del DOM en la UI */
-  function esc(str) {
-    return String(str ?? '')
-      .replace(/&/g,  '&amp;')
-      .replace(/</g,  '&lt;')
-      .replace(/>/g,  '&gt;')
-      .replace(/"/g,  '&quot;')
-      .replace(/'/g,  '&#39;');
+  /** Entero aleatorio entre a y b inclusive */
+  const rndInt = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
+
+  /** Escapa HTML para prevenir XSS al inyectar datos externos en la UI */
+  function esc(s) {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
-  /** Extrae el username limpio de un href de perfil de X */
-  function usernameFromHref(href) {
-    if (!href) return null;
-    return (href.split('/')[1] ?? '').split('?')[0].toLowerCase() || null;
+  /** Extrae username puro de un href de perfil de X */
+  function uname(href) {
+    return href ? (href.split('/')[1] ?? '').split('?')[0].toLowerCase() || null : null;
   }
 
-  /**
-   * Asigna un color de fondo al avatar de iniciales.
-   * Deterministico por letra, sin colores brillantes que rompan el tema oscuro.
-   */
-  function initialColor(ch) {
-    const palette = [
-      '#1e3a5f', '#1e4d3a', '#3d2260', '#5c2020',
-      '#1a4a4a', '#3a3a1e', '#2d1f4f', '#1f3d2d',
-    ];
-    const idx = ((ch || 'a').toLowerCase().charCodeAt(0) - 97 + 26) % 26;
-    return palette[idx % palette.length];
+  /** Formatea milisegundos como "4m 32s" */
+  function fmtMs(ms) {
+    const s = Math.ceil(ms / 1_000);
+    const m = Math.floor(s / 60);
+    return m > 0 ? `${m}m ${s % 60}s` : `${s}s`;
   }
 
-  /** Devuelve true si la sesion supero el timeout maximo */
-  function sessionExpired() {
-    return state.sessionStart !== null &&
-      (Date.now() - state.sessionStart) > CONFIG.SESSION_TIMEOUT_MS;
+  /** Formatea milisegundos como "37.45s" con dos decimales */
+  function fmtSec(ms) {
+    return (ms / 1_000).toFixed(2) + 's';
   }
 
-  // =============================================================
-  // MODULO: DETECTOR
-  // Responsabilidad: analizar celdas del DOM de X para determinar
-  // si un usuario es mutuo y extraer sus datos.
-  // =============================================================
-  const Detector = {
-    _systemPaths: new Set([
-      'search', 'explore', 'notifications', 'messages',
-      'settings', 'home', 'i', 'following', 'followers',
-    ]),
+  /** Color de fondo para avatar de inicial, deterministico por letra */
+  function icolor(ch) {
+    const p = ['#1e3a5f','#1e4d3a','#3d2260','#5c2020',
+               '#1a4a4a','#3a3a1e','#2d1f4f','#1f3d2d'];
+    return p[((ch || 'a').toLowerCase().charCodeAt(0) - 97 + 26) % 8];
+  }
+
+  /** True si se supero el timeout de sesion */
+  function expired() {
+    return S.sessionStart && (Date.now() - S.sessionStart) > CFG.TIMEOUT;
+  }
+
+  // =================================================================
+  // DETECCION DE PAGINA
+  // Determina en que pagina esta el usuario para habilitar el modulo
+  // correcto del dashboard.
+  // =================================================================
+  function detectPage() {
+    const path = window.location.pathname;
+    if (/\/following\b/.test(path))  return 'following';
+    if (/\/followers\b/.test(path))  return 'followers';
+    return 'other';
+  }
+
+  // =================================================================
+  // MODULO: DETECT
+  // Responsabilidad: analizar celdas del DOM para extraer datos de
+  // usuario y localizar botones de accion.
+  // =================================================================
+  const DETECT = {
+    _sys: new Set(['search','explore','notifications','messages',
+                   'settings','home','i','following','followers']),
 
     /**
-     * Determina si el usuario de este UserCell nos sigue de vuelta.
-     *
-     * X inyecta la etiqueta "Follows you" / "Te sigue" directamente
-     * en el innerText de la celda. Buscar el texto es mas robusto
-     * que buscar clases CSS, que cambian con cada deploy de X.
+     * True si el UserCell pertenece a un mutuo.
+     * X inyecta "Te sigue" / "Follows you" en el texto de la celda.
      */
-    doesFollowBack(cell) {
-      const text = cell.innerText || cell.textContent || '';
-      return /te sigue\b/i.test(text) || /follows you\b/i.test(text);
+    followsBack(cell) {
+      const t = cell.innerText || cell.textContent || '';
+      return /te sigue\b/i.test(t) || /follows you\b/i.test(t);
     },
 
-    /**
-     * Extrae username y nombre de display desde un [data-testid="UserCell"].
-     *
-     * Estrategia de username: recorre los <a href> de la celda descartando
-     * rutas del sistema de X (explore, settings, etc.).
-     *
-     * Estrategia de nombre: intenta dos selectores conocidos de X con
-     * fallback al username si ninguno esta presente.
-     */
-    extractInfo(cell) {
+    /** Extrae username y displayName de un [data-testid="UserCell"] */
+    userInfo(cell) {
       let username = null;
-
       for (const a of cell.querySelectorAll('a[href^="/"]')) {
-        const u = usernameFromHref(a.getAttribute('href'));
-        if (u && !u.includes('#') && !this._systemPaths.has(u)) {
-          username = u;
-          break;
-        }
+        const u = uname(a.getAttribute('href'));
+        if (u && !u.includes('#') && !this._sys.has(u)) { username = u; break; }
       }
-
-      const nameEl =
-        cell.querySelector('[data-testid="User-Name"] span span') ||
-        cell.querySelector('[data-testid="UserName"] span span');
-
-      const displayName = nameEl?.textContent?.trim() || username || 'Usuario';
-
-      return { username, displayName };
+      const ne = cell.querySelector('[data-testid="User-Name"] span span')
+              || cell.querySelector('[data-testid="UserName"] span span');
+      return { username, displayName: ne?.textContent?.trim() || username || '?' };
     },
-  };
 
-  // =============================================================
-  // MODULO: SCRAPER
-  // Responsabilidad: desplazar la pagina de X en background
-  // mientras el overlay oculta el scroll al usuario.
-  // =============================================================
-  const Scraper = {
     /**
-     * Recorre la pagina /following haciendo scroll automatico.
-     *
-     * El overlay de la UI esta activo durante esta fase, por lo que
-     * el usuario no ve el scroll. window.scrollBy() opera sobre el
-     * documento subyacente independientemente del overlay.
-     *
-     * Algoritmo de terminacion: si el scrollHeight no cambia
-     * CONFIG.MAX_STUCK_SCROLLS veces consecutivas, se considera
-     * que se llego al final de la lista.
-     *
-     * @param {function(number, number): void} onProgress
-     *   Callback con (totalRevisados, noMutuosEncontrados)
+     * Localiza el boton de UNFOLLOW dentro de un UserCell.
+     * Multiples fallbacks por si X cambia los selectores.
      */
-    async run(onProgress) {
-      window.scrollTo(0, 0);
-      await sleep(1_200);
-
-      const seen = new Set();
-      let stuckCount = 0;
-      let lastHeight = 0;
-
-      while (stuckCount < CONFIG.MAX_STUCK_SCROLLS && !state.stopFlag) {
-        if (sessionExpired()) {
-          console.warn('[Unfollowers-X] Timeout de sesion alcanzado durante escaneo.');
-          break;
-        }
-
-        document.querySelectorAll('[data-testid="UserCell"]').forEach(cell => {
-          const { username, displayName } = Detector.extractInfo(cell);
-          if (!username || seen.has(username)) return;
-
-          seen.add(username);
-
-          if (!Detector.doesFollowBack(cell)) {
-            state.nonMutuals.push({ username, displayName });
-          }
-        });
-
-        onProgress(seen.size, state.nonMutuals.length);
-
-        window.scrollBy(0, CONFIG.SCROLL_STEP_PX);
-        await sleep(rnd(CONFIG.SCROLL_MIN_MS, CONFIG.SCROLL_MAX_MS));
-
-        const newHeight = document.body.scrollHeight;
-        stuckCount = (newHeight === lastHeight) ? stuckCount + 1 : 0;
-        lastHeight = newHeight;
-      }
-
-      return { scanned: seen.size, found: state.nonMutuals.length };
-    },
-  };
-
-  // =============================================================
-  // MODULO: UNFOLLOWER
-  // Responsabilidad: ejecutar las acciones de unfollow con
-  // delays anti-baneo y confirmacion del modal de X.
-  // =============================================================
-  const Unfollower = {
-    /**
-     * Localiza el boton de unfollow dentro de un UserCell.
-     *
-     * X usa data-testid="[username]-follow" para este boton.
-     * Se incluyen tres estrategias de fallback para sobrevivir
-     * a cambios de nomenclatura en futuros deploys de X.
-     */
-    findBtn(cell) {
+    unfollowBtn(cell) {
       return (
-        cell.querySelector('[data-testid$="-follow"]')                        ||
-        cell.querySelector('button[aria-label*="Unfollow" i]')                ||
-        cell.querySelector('button[aria-label*="Dejar de seguir" i]')         ||
+        cell.querySelector('[data-testid$="-follow"]')                      ||
+        cell.querySelector('button[aria-label*="Unfollow" i]')              ||
+        cell.querySelector('button[aria-label*="Dejar de seguir" i]')       ||
         [...cell.querySelectorAll('button')].find(b =>
           /siguiendo|following/i.test(b.textContent)
-        )                                                                      ||
+        )                                                                    ||
         null
       );
     },
 
     /**
-     * Polling del modal de confirmacion de X.
-     *
-     * X muestra [data-testid="confirmationSheetConfirm"] al hacer
-     * clic en "Siguiendo" para cuentas publicas. El polling cada
-     * 150ms hasta el timeout evita race conditions con la animacion
-     * de apertura del modal.
+     * Localiza el boton de FOLLOW (no Following, no Unfollow).
+     * Usado por el modulo Auto-Follow en paginas /followers.
      */
-    async waitConfirm(timeoutMs = 4_000) {
-      const deadline = Date.now() + timeoutMs;
-      return new Promise(resolve => {
-        const check = () => {
-          const btn = document.querySelector('[data-testid="confirmationSheetConfirm"]');
-          if (btn) {
-            btn.click();
-            return resolve(true);
+    followBtn(cell) {
+      // data-testid=[username]-follow, excluyendo unfollow
+      const byTestId = cell.querySelector('[data-testid$="-follow"]');
+      if (byTestId) {
+        const lbl = byTestId.getAttribute('aria-label') || '';
+        if (!/unfollow/i.test(lbl)) return byTestId;
+      }
+      return (
+        cell.querySelector('button[aria-label^="Follow @" i]')              ||
+        [...cell.querySelectorAll('button')].find(b => {
+          const t = b.textContent?.trim() || '';
+          const l = b.getAttribute('aria-label') || '';
+          return /^follow$/i.test(t) && !/following|unfollow/i.test(t + l);
+        })                                                                   ||
+        null
+      );
+    },
+  };
+
+  // =================================================================
+  // MODULO: SCRAPER
+  // Responsabilidad: desplazar la pagina en background (el overlay
+  // cubre el scroll) y capturar UserCells del DOM.
+  // =================================================================
+  const SCRAPER = {
+    /**
+     * Escaneo completo de la pagina /following.
+     * Reinicia desde el top y lee todos los UserCells que no sean mutuos.
+     */
+    async scanUnfollowers(onProgress) {
+      window.scrollTo(0, 0);
+      await sleep(1_200);
+      const seen = new Set();
+      let stuck = 0, lastH = 0;
+
+      while (stuck < CFG.SC_MAX_STUCK && !S.stop) {
+        if (expired()) break;
+        document.querySelectorAll('[data-testid="UserCell"]').forEach(cell => {
+          const { username, displayName } = DETECT.userInfo(cell);
+          if (!username || seen.has(username)) return;
+          seen.add(username);
+          if (!DETECT.followsBack(cell)) {
+            S.uf.nonMutuals.push({ username, displayName });
           }
-          Date.now() < deadline ? setTimeout(check, 150) : resolve(true);
+        });
+        onProgress(seen.size, S.uf.nonMutuals.length);
+        window.scrollBy(0, CFG.SC_STEP);
+        await sleep(rndInt(CFG.SC_MIN, CFG.SC_MAX));
+        const nh = document.body.scrollHeight;
+        stuck = nh === lastH ? stuck + 1 : 0;
+        lastH = nh;
+      }
+    },
+
+    /**
+     * Carga un chunk de seguidores desde la pagina actual de /followers.
+     * Continua desde la posicion de scroll actual (no reinicia).
+     * Usado por el modulo Auto-Follow con carga incremental por chunks.
+     */
+    async scanFollowers(onProgress) {
+      let added = 0;
+      S.af.stuckCount = 0;
+
+      while (S.af.stuckCount < CFG.SC_MAX_STUCK && !S.stop) {
+        if (expired()) break;
+        document.querySelectorAll('[data-testid="UserCell"]').forEach(cell => {
+          const { username, displayName } = DETECT.userInfo(cell);
+          if (!username || S.af.seen.has(username)) return;
+          // Solo incluir usuarios que podemos seguir (boton Follow presente)
+          if (!DETECT.followBtn(cell)) return;
+          S.af.seen.add(username);
+          S.af.candidates.push({ username, displayName });
+          added++;
+        });
+        onProgress(S.af.candidates.length);
+        if (added >= CFG.AF_CHUNK_SIZE) break; // chunk completo
+        window.scrollBy(0, CFG.SC_STEP);
+        await sleep(rndInt(CFG.SC_MIN, CFG.SC_MAX));
+        const nh = document.body.scrollHeight;
+        S.af.stuckCount = nh === S.af.lastHeight ? S.af.stuckCount + 1 : 0;
+        S.af.lastHeight = nh;
+      }
+
+      S.af.scanDone = S.af.stuckCount >= CFG.SC_MAX_STUCK;
+      return added;
+    },
+  };
+
+  // =================================================================
+  // MODULO: UF (Unfollower)
+  // Responsabilidad: ejecutar unfollows con delays precisos,
+  // cooldowns cada 10 acciones y confirmacion del modal de X.
+  // =================================================================
+  const UF = {
+    async waitConfirm(t = 4_000) {
+      const d = Date.now() + t;
+      return new Promise(r => {
+        const ck = () => {
+          const b = document.querySelector('[data-testid="confirmationSheetConfirm"]');
+          if (b) { b.click(); return r(true); }
+          Date.now() < d ? setTimeout(ck, 150) : r(true);
         };
-        check();
+        ck();
       });
     },
 
     /**
-     * Procesa la cola de unfollows con scroll progresivo.
-     *
-     * Por que scroll progresivo en lugar de referencias guardadas:
-     * X virtualiza la lista eliminando nodos del DOM al scrollear.
-     * Las referencias a elementos guardadas durante el escaneo pueden
-     * quedar invalidadas. Buscar activamente cada UserCell al momento
-     * de procesarlo es el unico metodo fiable para listas largas.
-     *
-     * @param {Array<{username, displayName}>} queue
-     * @param {function(number, number, string): void} onProgress
-     * @param {function(number, number, number): Promise<void>} onCountdown
-     * @returns {Promise<{done: number, limitReached: boolean, stopped: boolean}>}
+     * Cuenta regresiva con callbacks cada 500ms.
+     * Permite mostrar tiempos precisos (decimales) en la UI.
      */
-    async processQueue(queue, onProgress, onCountdown) {
-      state.unfollowCount = 0;
+    async countdown(ms, onTick) {
+      const deadline = Date.now() + ms;
+      while (Date.now() < deadline && !S.stop) {
+        onTick(deadline - Date.now());
+        await sleep(500);
+      }
+    },
+
+    /**
+     * Ejecuta la cola de unfollows con scroll progresivo.
+     * No almacena referencias al DOM (la lista de X esta virtualizada).
+     *
+     * Logica de cooldown:
+     * - Cada CFG.UF_CD_EVERY unfollows → pausa aleatoria de 4-10 min
+     * - Entre unfollows normales → delay preciso de 10.23-64.32s
+     */
+    async run(queue, onProgress, onCooldown) {
+      S.uf.count = 0;
       window.scrollTo(0, 0);
       await sleep(1_500);
 
       const pending = new Set(queue.map(u => u.username));
-      let done = 0;
-      let lastHeight = 0;
-      let stuckCount = 0;
+      let done = 0, lastH = 0, stuck = 0;
 
-      while (pending.size > 0 && !state.stopFlag && stuckCount < 7) {
-        if (sessionExpired()) {
-          console.warn('[Unfollowers-X] Timeout de sesion alcanzado durante unfollow.');
-          break;
-        }
-
+      while (pending.size > 0 && !S.stop && stuck < 7) {
+        if (expired()) break;
         const cells = document.querySelectorAll('[data-testid="UserCell"]');
-        let foundInThisPass = false;
+        let found = false;
 
         for (const cell of cells) {
-          const { username } = Detector.extractInfo(cell);
+          const { username } = DETECT.userInfo(cell);
           if (!username || !pending.has(username)) continue;
 
-          foundInThisPass = true;
-          pending.delete(username); // eliminar antes de procesar evita duplicados
+          found = true;
+          pending.delete(username);
 
           cell.scrollIntoView({ behavior: 'smooth', block: 'center' });
           await sleep(500 + Math.random() * 400);
 
-          const btn = this.findBtn(cell);
+          const btn = DETECT.unfollowBtn(cell);
+          if (!btn) { console.warn('[XUF] btn no encontrado @' + username); continue; }
 
-          if (!btn) {
-            console.warn('[Unfollowers-X] Boton no encontrado para @' + username);
-            continue;
-          }
-
-          onProgress(done + 1, queue.length, username);
+          const delayMs = rnd(CFG.UF_DELAY_MIN, CFG.UF_DELAY_MAX);
+          onProgress(done + 1, queue.length, username, delayMs);
 
           try {
-            // Hover antes del clic simula comportamiento humano
             btn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true }));
             await sleep(250 + Math.random() * 150);
-
             btn.click();
             await sleep(800 + Math.random() * 300);
-
             await this.waitConfirm();
             await sleep(400);
-
-            state.unfollowCount++;
+            S.uf.count++;
             done++;
-          } catch (err) {
-            console.error('[Unfollowers-X] Error procesando @' + username + ':', err);
+          } catch (e) {
+            console.error('[XUF] error @' + username, e);
           }
 
-          // Verificar limite de sesion
-          if (state.unfollowCount >= CONFIG.MAX_UNFOLLOWS) {
-            return { done, limitReached: true, stopped: false };
-          }
-
-          // Delay anti-baneo aleatorio antes del proximo unfollow
-          if (pending.size > 0 && !state.stopFlag) {
-            const totalMs  = rnd(CONFIG.DELAY_MIN_MS, CONFIG.DELAY_MAX_MS);
-            const totalSec = Math.round(totalMs / 1_000);
-            await onCountdown(totalSec, done, queue.length);
+          // Cooldown obligatorio cada N unfollows
+          if (done > 0 && done % CFG.UF_CD_EVERY === 0 && pending.size > 0 && !S.stop) {
+            const cdMs = rndInt(CFG.UF_CD_MIN, CFG.UF_CD_MAX);
+            await this.countdown(cdMs, rem => onCooldown(rem, done, queue.length));
+          } else if (pending.size > 0 && !S.stop) {
+            await this.countdown(delayMs, rem => onProgress(done, queue.length, username, rem));
           }
         }
 
-        if (!foundInThisPass) {
-          window.scrollBy(0, CONFIG.SCROLL_STEP_PX);
-          await sleep(rnd(CONFIG.SCROLL_MIN_MS, CONFIG.SCROLL_MAX_MS));
-          const newHeight = document.body.scrollHeight;
-          stuckCount = (newHeight === lastHeight) ? stuckCount + 1 : 0;
-          lastHeight = newHeight;
+        if (!found) {
+          window.scrollBy(0, CFG.SC_STEP);
+          await sleep(rndInt(CFG.SC_MIN, CFG.SC_MAX));
+          const nh = document.body.scrollHeight;
+          stuck = nh === lastH ? stuck + 1 : 0;
+          lastH = nh;
         } else {
-          stuckCount = 0;
+          stuck = 0;
         }
       }
 
-      return { done, limitReached: false, stopped: state.stopFlag };
+      return { done, stopped: S.stop };
     },
   };
 
-  // =============================================================
-  // MODULO: UI
-  // Responsabilidad: crear y gestionar el overlay full-screen,
-  // renderizar cada fase del flujo y exponer callbacks.
-  // =============================================================
-  const UI = {
-    _el: null, // referencia al elemento #xuf-overlay
+  // =================================================================
+  // MODULO: AF (Auto-Follow)
+  // Responsabilidad: seguir usuarios con delays, cooldowns y el
+  // limite estricto de 20 follows por lote.
+  // =================================================================
+  const AF = {
+    async waitConfirm(t = 4_000) {
+      const d = Date.now() + t;
+      return new Promise(r => {
+        const ck = () => {
+          const b = document.querySelector('[data-testid="confirmationSheetConfirm"]');
+          if (b) { b.click(); return r(true); }
+          Date.now() < d ? setTimeout(ck, 150) : r(true);
+        };
+        ck();
+      });
+    },
 
-    // -----------------------------------------------------------
-    // CSS del overlay: inyectado una sola vez en <head>
-    // -----------------------------------------------------------
+    async countdown(ms, onTick) {
+      const deadline = Date.now() + ms;
+      while (Date.now() < deadline && !S.stop) {
+        onTick(deadline - Date.now());
+        await sleep(500);
+      }
+    },
+
+    /**
+     * Verifica si el cooldown de 2 horas entre lotes esta activo.
+     * Solo aplica dentro de la misma sesion (sin persistencia en localStorage).
+     */
+    batchCooldownActive() {
+      if (!S.af.lastBatchEnd) return false;
+      return (Date.now() - S.af.lastBatchEnd) < CFG.AF_BATCH_WAIT;
+    },
+
+    batchCooldownRemaining() {
+      if (!S.af.lastBatchEnd) return 0;
+      return Math.max(0, CFG.AF_BATCH_WAIT - (Date.now() - S.af.lastBatchEnd));
+    },
+
+    /**
+     * Ejecuta la cola de follows con scroll progresivo.
+     * Se detiene al alcanzar CFG.AF_MAX_PER_BATCH follows.
+     */
+    async run(queue, onProgress, onCooldown) {
+      S.af.count = 0;
+      window.scrollTo(0, 0);
+      await sleep(1_500);
+
+      const pending = new Set(queue.map(u => u.username));
+      let done = 0, lastH = 0, stuck = 0;
+
+      while (pending.size > 0 && !S.stop && stuck < 7 && done < CFG.AF_MAX_PER_BATCH) {
+        if (expired()) break;
+        const cells = document.querySelectorAll('[data-testid="UserCell"]');
+        let found = false;
+
+        for (const cell of cells) {
+          if (done >= CFG.AF_MAX_PER_BATCH) break;
+          const { username } = DETECT.userInfo(cell);
+          if (!username || !pending.has(username)) continue;
+
+          found = true;
+          pending.delete(username);
+
+          cell.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          await sleep(500 + Math.random() * 400);
+
+          const btn = DETECT.followBtn(cell);
+          if (!btn) { console.warn('[XUF] follow btn no encontrado @' + username); continue; }
+
+          const delayMs = rndInt(CFG.AF_DELAY_MIN, CFG.AF_DELAY_MAX);
+          onProgress(done + 1, queue.length, username, delayMs);
+
+          try {
+            btn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true }));
+            await sleep(250 + Math.random() * 150);
+            btn.click();
+            await sleep(800 + Math.random() * 300);
+            await this.waitConfirm();
+            await sleep(400);
+            S.af.count++;
+            done++;
+          } catch (e) {
+            console.error('[XUF] error follow @' + username, e);
+          }
+
+          if (done >= CFG.AF_MAX_PER_BATCH) break;
+
+          // Cooldown obligatorio cada N follows
+          if (done > 0 && done % CFG.AF_CD_EVERY === 0 && pending.size > 0 && !S.stop) {
+            const cdMs = rndInt(CFG.AF_CD_MIN, CFG.AF_CD_MAX);
+            await this.countdown(cdMs, rem => onCooldown(rem, done, queue.length));
+          } else if (pending.size > 0 && !S.stop) {
+            await this.countdown(delayMs, rem => onProgress(done, queue.length, username, rem));
+          }
+        }
+
+        if (!found) {
+          window.scrollBy(0, CFG.SC_STEP);
+          await sleep(rndInt(CFG.SC_MIN, CFG.SC_MAX));
+          const nh = document.body.scrollHeight;
+          stuck = nh === lastH ? stuck + 1 : 0;
+          lastH = nh;
+        } else {
+          stuck = 0;
+        }
+      }
+
+      S.af.lastBatchEnd = Date.now();
+      return { done, stopped: S.stop };
+    },
+  };
+
+  // =================================================================
+  // MODULO: UI
+  // Responsabilidad: CSS inyectado, estructura del overlay,
+  // renderizado de todas las fases de ambos modulos.
+  // =================================================================
+  const UI = {
+    _el: null,
+
+    // -----------------------------------------------------------------
+    // CSS — inyectado una sola vez en <head>
+    // -----------------------------------------------------------------
     _CSS: `
-      /* ── Base overlay ────────────────────────────────────── */
-      #xuf-overlay {
+      /* ── Overlay base ───────────────────────────────────── */
+      #xuf-ov {
         position: fixed;
         inset: 0;
         z-index: 9999999;
-        background: #0f0f0f;
-        color: #e0e0e0;
+        background: #111111;
+        color: #d8d8d8;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
                      'Helvetica Neue', Arial, sans-serif;
         font-size: 14px;
         line-height: 1.55;
         display: flex;
         flex-direction: column;
-        align-items: center;
-        justify-content: center;
         overflow: hidden;
       }
 
       /* ── Animacion de entrada ────────────────────────────── */
       @keyframes xuf-in {
-        from { opacity: 0; transform: translateY(10px); }
+        from { opacity: 0; transform: translateY(8px); }
         to   { opacity: 1; transform: translateY(0); }
       }
-      .xuf-anim { animation: xuf-in 0.22s ease; }
+      .xuf-anim { animation: xuf-in 0.2s ease; }
 
-      /* ── Card centrada (escaneo / unfollow / done) ───────── */
+      /* ── Barra de navegacion superior ────────────────────── */
+      .xuf-nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 24px;
+        height: 52px;
+        border-bottom: 1px solid #1e1e1e;
+        background: #0d0d0d;
+        flex-shrink: 0;
+        gap: 16px;
+      }
+      .xuf-brand {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        color: #2a2a2a;
+        white-space: nowrap;
+      }
+      .xuf-ver { color: #222; }
+
+      /* ── Tabs ────────────────────────────────────────────── */
+      .xuf-tabs {
+        display: flex;
+        gap: 4px;
+        flex: 1;
+        justify-content: center;
+      }
+      .xuf-tab {
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 5px;
+        padding: 6px 16px;
+        font-size: 12px;
+        font-weight: 600;
+        color: #383838;
+        cursor: pointer;
+        transition: all 0.15s;
+        font-family: inherit;
+        white-space: nowrap;
+      }
+      .xuf-tab:hover:not(.xuf-tab-disabled):not(.xuf-tab-active) {
+        border-color: #222;
+        color: #686868;
+      }
+      .xuf-tab.xuf-tab-active {
+        background: #1a1a1a;
+        border-color: #282828;
+        color: #c8c8c8;
+      }
+      .xuf-tab.xuf-tab-disabled {
+        opacity: 0.28;
+        cursor: not-allowed;
+      }
+      .xuf-tab-hint {
+        font-size: 11px;
+        color: #2a2a2a;
+        text-align: center;
+        flex: 1;
+      }
+
+      /* ── Boton cerrar ────────────────────────────────────── */
+      .xuf-close {
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 11px;
+        font-weight: 700;
+        color: #282828;
+        padding: 6px 8px;
+        border-radius: 4px;
+        transition: color 0.1s, background 0.1s;
+        font-family: inherit;
+        white-space: nowrap;
+      }
+      .xuf-close:hover { color: #c8c8c8; background: #1a1a1a; }
+
+      /* ── Cuerpo principal ────────────────────────────────── */
+      .xuf-body {
+        flex: 1;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+      /* Modo centrado: para fases de scan, progreso, done */
+      .xuf-body-center {
+        align-items: center;
+        justify-content: center;
+        overflow-y: auto;
+      }
+      /* Modo panel: para fases de resultados (tabla full-height) */
+      .xuf-body-panel {
+        align-items: stretch;
+        justify-content: flex-start;
+        overflow: hidden;
+      }
+
+      /* ── Card centrada ───────────────────────────────────── */
       .xuf-card {
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 28px;
+        gap: 24px;
         width: 100%;
         max-width: 440px;
-        padding: 56px 32px;
+        padding: 52px 32px;
         text-align: center;
       }
 
-      /* ── Marca ───────────────────────────────────────────── */
-      .xuf-brand {
-        font-size: 10px;
-        font-weight: 700;
-        letter-spacing: 2.5px;
-        text-transform: uppercase;
-        color: #2e2e2e;
-        margin: 0;
-      }
-
-      /* ── Spinner CSS puro ────────────────────────────────── */
+      /* ── Spinner ─────────────────────────────────────────── */
       @keyframes xuf-spin { to { transform: rotate(360deg); } }
       .xuf-spinner {
-        width: 30px;
-        height: 30px;
-        border: 2px solid #1c1c1c;
-        border-top-color: #666;
+        width: 28px;
+        height: 28px;
+        border: 2px solid #1a1a1a;
+        border-top-color: #555;
         border-radius: 50%;
         animation: xuf-spin 0.85s linear infinite;
         flex-shrink: 0;
@@ -433,59 +656,103 @@
 
       /* ── Tipografia ──────────────────────────────────────── */
       .xuf-heading {
-        font-size: 20px;
+        font-size: 19px;
         font-weight: 600;
-        color: #e0e0e0;
+        color: #d8d8d8;
         margin: 0;
         letter-spacing: -0.3px;
       }
       .xuf-sub {
         font-size: 13px;
-        color: #484848;
+        color: #404040;
         margin: 0;
-        max-width: 320px;
-        line-height: 1.6;
+        max-width: 340px;
+        line-height: 1.65;
       }
       .xuf-big-num {
-        font-size: 80px;
+        font-size: 76px;
         font-weight: 700;
-        color: #e0e0e0;
+        color: #d8d8d8;
         line-height: 1;
         margin: 0;
         letter-spacing: -4px;
       }
       .xuf-target {
-        font-size: 17px;
+        font-size: 16px;
         font-weight: 600;
-        color: #606060;
+        color: #585858;
         margin: 0;
-        min-height: 24px;
+        min-height: 22px;
       }
+      .xuf-page-note {
+        font-size: 12px;
+        color: #2e2e2e;
+        margin: 0;
+        text-align: center;
+      }
+
+      /* ── Indicador de pagina (dashboard) ─────────────────── */
+      .xuf-page-ind {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        padding: 20px 28px;
+        background: #0d0d0d;
+        border: 1px solid #181818;
+        border-radius: 8px;
+        width: 100%;
+        max-width: 400px;
+      }
+      .xuf-page-ind-url {
+        font-size: 11px;
+        font-family: 'SF Mono', Consolas, monospace;
+        color: #303030;
+      }
+      .xuf-page-ind-status {
+        font-size: 13px;
+        color: #585858;
+      }
+      .xuf-page-ind-status.ok { color: #406840; }
+
+      /* ── Aviso de modulo en uso ───────────────────────────── */
+      .xuf-module-warn {
+        background: #0f0e00;
+        border: 1px solid #1c1a00;
+        border-radius: 6px;
+        padding: 10px 16px;
+        font-size: 12px;
+        color: #504a00;
+        width: 100%;
+        max-width: 400px;
+        text-align: center;
+      }
+      .xuf-module-warn strong { color: #807030; }
 
       /* ── Fila de estadisticas (fase escaneo) ─────────────── */
       .xuf-stats {
         display: flex;
-        gap: 52px;
+        gap: 48px;
         align-items: flex-end;
       }
       .xuf-stat {
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 5px;
+        gap: 4px;
       }
       .xuf-stat-n {
-        font-size: 42px;
+        font-size: 40px;
         font-weight: 700;
-        color: #e0e0e0;
+        color: #d8d8d8;
         line-height: 1;
         letter-spacing: -1.5px;
-        min-width: 60px;
+        min-width: 56px;
         text-align: center;
       }
       .xuf-stat-l {
-        font-size: 10px;
-        color: #303030;
+        font-size: 9px;
+        color: #282828;
         text-transform: uppercase;
         letter-spacing: 1.2px;
       }
@@ -502,39 +769,48 @@
       .xuf-prog-track {
         width: 100%;
         height: 2px;
-        background: #1c1c1c;
+        background: #1a1a1a;
         border-radius: 1px;
         overflow: hidden;
       }
       .xuf-prog-fill {
         height: 100%;
-        background: #e0e0e0;
+        background: #d8d8d8;
         border-radius: 1px;
-        transition: width 0.35s ease;
+        transition: width 0.4s ease;
       }
-      .xuf-prog-lbl {
-        font-size: 11px;
-        color: #383838;
+      .xuf-prog-lbl { font-size: 11px; color: #303030; }
+
+      /* ── Banner de cooldown ──────────────────────────────── */
+      .xuf-cd-banner {
+        background: #0d0f16;
+        border: 1px solid #141820;
+        border-radius: 6px;
+        padding: 12px 20px;
+        font-size: 13px;
+        color: #383c50;
+        width: 100%;
+        max-width: 360px;
+        text-align: center;
+        line-height: 1.6;
       }
+      .xuf-cd-banner strong { color: #5060a0; }
 
       /* ── Panel de resultados ─────────────────────────────── */
-      #xuf-overlay.xuf-panel-mode {
-        align-items: stretch;
-        justify-content: flex-start;
-      }
       .xuf-panel {
         display: flex;
         flex-direction: column;
-        width: 100%;
         height: 100%;
-        max-width: 860px;
+        max-width: 900px;
+        width: 100%;
         margin: 0 auto;
       }
+
       .xuf-panel-hd {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 18px 28px;
+        padding: 14px 28px;
         border-bottom: 1px solid #181818;
         flex-shrink: 0;
         gap: 16px;
@@ -542,34 +818,31 @@
       .xuf-panel-hd-r {
         display: flex;
         align-items: center;
-        gap: 20px;
+        gap: 18px;
       }
-      .xuf-counter-lbl {
+      .xuf-sel-lbl {
         font-size: 12px;
-        color: #404040;
+        color: #383838;
         white-space: nowrap;
       }
-      .xuf-counter-lbl strong {
-        color: #c0c0c0;
-        font-weight: 600;
-      }
+      .xuf-sel-lbl strong { color: #b8b8b8; font-weight: 600; }
 
-      /* Aviso cuando hay mas no-mutuos que el limite */
-      .xuf-warn-bar {
-        background: #161200;
-        border-bottom: 1px solid #201800;
-        padding: 8px 28px;
+      /* Aviso limite (cuando hay mas de MAX_PER_BATCH) */
+      .xuf-limit-bar {
+        background: #120f00;
+        border-bottom: 1px solid #1e1900;
+        padding: 7px 28px;
         font-size: 12px;
-        color: #585030;
+        color: #504800;
         flex-shrink: 0;
       }
-      .xuf-warn-bar strong { color: #907830; }
+      .xuf-limit-bar strong { color: #807030; }
 
       .xuf-toolbar {
         display: flex;
         align-items: center;
         gap: 8px;
-        padding: 11px 28px;
+        padding: 10px 28px;
         border-bottom: 1px solid #181818;
         flex-shrink: 0;
       }
@@ -577,10 +850,10 @@
         flex: 1;
         overflow-y: auto;
         scrollbar-width: thin;
-        scrollbar-color: #1c1c1c transparent;
+        scrollbar-color: #1a1a1a transparent;
       }
-      .xuf-table-scroll::-webkit-scrollbar       { width: 3px; }
-      .xuf-table-scroll::-webkit-scrollbar-thumb { background: #1c1c1c; }
+      .xuf-table-scroll::-webkit-scrollbar { width: 3px; }
+      .xuf-table-scroll::-webkit-scrollbar-thumb { background: #1a1a1a; }
 
       .xuf-table {
         width: 100%;
@@ -590,37 +863,36 @@
         border-bottom: 1px solid #131313;
         transition: background 0.1s;
       }
-      .xuf-tr:hover { background: #111111; }
+      .xuf-tr:hover { background: #0f0f0f; }
       .xuf-td {
-        padding: 10px 12px;
+        padding: 9px 12px;
         vertical-align: middle;
       }
-      .xuf-td-cb { width: 48px; text-align: center; }
-      .xuf-td-av { width: 52px; }
+      .xuf-td-cb { width: 44px; text-align: center; }
+      .xuf-td-av { width: 48px; }
 
-      /* Avatar de iniciales: sin carga de imagenes externas */
       .xuf-avatar {
-        width: 34px;
-        height: 34px;
+        width: 32px;
+        height: 32px;
         border-radius: 50%;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 13px;
+        font-size: 12px;
         font-weight: 700;
-        color: rgba(255, 255, 255, 0.65);
+        color: rgba(255,255,255,0.6);
         flex-shrink: 0;
       }
       .xuf-u-name {
         display: block;
         font-weight: 600;
-        font-size: 14px;
-        color: #d0d0d0;
+        font-size: 13px;
+        color: #c8c8c8;
       }
       .xuf-u-handle {
         display: block;
-        font-size: 12px;
-        color: #404040;
+        font-size: 11px;
+        color: #383838;
         margin-top: 2px;
       }
 
@@ -628,447 +900,763 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 16px 28px;
+        padding: 14px 28px;
         border-top: 1px solid #181818;
         flex-shrink: 0;
-        gap: 16px;
+        gap: 12px;
+        flex-wrap: wrap;
       }
-      .xuf-limit-note {
-        font-size: 12px;
-        color: #303030;
-        margin: 0;
-      }
+      .xuf-ft-note { font-size: 11px; color: #282828; margin: 0; }
 
       /* ── Botones ─────────────────────────────────────────── */
       .xuf-btn {
-        padding: 8px 20px;
-        border-radius: 5px;
+        padding: 7px 18px;
+        border-radius: 4px;
         border: none;
         cursor: pointer;
-        font-size: 13px;
+        font-size: 12px;
         font-weight: 600;
-        transition: background 0.15s, color 0.15s, opacity 0.15s, border-color 0.15s;
+        transition: background 0.15s, color 0.15s, opacity 0.15s;
         white-space: nowrap;
         font-family: inherit;
         line-height: 1.4;
       }
-      .xuf-btn:disabled {
-        opacity: 0.3;
-        cursor: not-allowed;
-        pointer-events: none;
-      }
-      .xuf-btn:focus-visible {
-        outline: 2px solid #505050;
-        outline-offset: 2px;
-      }
-      .xuf-btn-primary {
-        background: #e0e0e0;
-        color: #0f0f0f;
-      }
-      .xuf-btn-primary:hover:not(:disabled) { background: #ffffff; }
+      .xuf-btn:disabled { opacity: 0.3; cursor: not-allowed; pointer-events: none; }
+      .xuf-btn:focus-visible { outline: 2px solid #484848; outline-offset: 2px; }
+
+      .xuf-btn-primary { background: #d8d8d8; color: #0d0d0d; }
+      .xuf-btn-primary:hover:not(:disabled) { background: #f0f0f0; }
 
       .xuf-btn-ghost {
         background: transparent;
-        color: #505050;
+        color: #484848;
         border: 1px solid #1e1e1e;
       }
       .xuf-btn-ghost:hover:not(:disabled) {
         background: #181818;
-        color: #c0c0c0;
-        border-color: #282828;
+        color: #b8b8b8;
+        border-color: #2a2a2a;
       }
-      .xuf-btn-icon {
-        background: none;
-        border: none;
-        cursor: pointer;
-        font-size: 11px;
-        font-weight: 700;
-        color: #303030;
-        padding: 6px 8px;
-        border-radius: 4px;
-        transition: color 0.1s, background 0.1s;
-        font-family: inherit;
-        line-height: 1;
-      }
-      .xuf-btn-icon:hover { color: #e0e0e0; background: #181818; }
+
+      .xuf-btn-danger { background: #3a0f0f; color: #c87070; border: 1px solid #4a1515; }
+      .xuf-btn-danger:hover:not(:disabled) { background: #4a1515; color: #e08080; }
 
       /* ── Checkbox ────────────────────────────────────────── */
       .xuf-cb {
-        width: 14px;
-        height: 14px;
+        width: 13px;
+        height: 13px;
         cursor: pointer;
-        accent-color: #c0c0c0;
+        accent-color: #b8b8b8;
       }
       .xuf-cb:disabled { opacity: 0.3; cursor: not-allowed; }
     `,
 
-    // -----------------------------------------------------------
-    // Metodos de ciclo de vida del overlay
-    // -----------------------------------------------------------
+    // -----------------------------------------------------------------
+    // Ciclo de vida del overlay
+    // -----------------------------------------------------------------
 
-    /** Inyecta el CSS en <head>. Idempotente. */
-    _injectStyles() {
+    injectCSS() {
       if (document.getElementById('xuf-css')) return;
       const s = document.createElement('style');
-      s.id = 'xuf-css';
+      s.id   = 'xuf-css';
       s.textContent = this._CSS;
       document.head.appendChild(s);
     },
 
-    /** Crea el elemento overlay en el DOM y lo retorna. */
     mount() {
-      document.getElementById('xuf-overlay')?.remove();
-      this._injectStyles();
+      document.getElementById('xuf-ov')?.remove();
+      this.injectCSS();
       this._el = document.createElement('div');
-      this._el.id = 'xuf-overlay';
+      this._el.id = 'xuf-ov';
       document.body.appendChild(this._el);
       return this._el;
     },
 
-    /** Elimina el overlay del DOM y restaura el feed de X. */
     unmount() {
       this._el?.remove();
       this._el = null;
     },
 
-    // -----------------------------------------------------------
-    // FASE 1: Escaneo
-    // -----------------------------------------------------------
-
-    /** Renderiza la pantalla de escaneo con spinner y contadores. */
-    showScanPhase() {
+    /** Pinta la estructura persistente: nav + tabs + cuerpo vacio */
+    buildShell(pageType) {
       if (!this._el) return;
-      this._el.classList.remove('xuf-panel-mode');
+      const ufDisabled  = pageType !== 'following';
+      const afDisabled  = pageType !== 'followers';
       this._el.innerHTML = `
-        <div class="xuf-card xuf-anim">
-          <p class="xuf-brand">Unfollowers-X &nbsp; v1.2</p>
-          <div class="xuf-spinner"></div>
-          <p class="xuf-heading">Escaneando lista de seguidos</p>
-          <p class="xuf-sub" id="xuf-scan-sub">Iniciando...</p>
-          <div class="xuf-stats">
-            <div class="xuf-stat">
-              <span class="xuf-stat-n" id="xuf-n-scanned">0</span>
-              <span class="xuf-stat-l">Revisados</span>
-            </div>
-            <div class="xuf-stat">
-              <span class="xuf-stat-n" id="xuf-n-found">0</span>
-              <span class="xuf-stat-l">No-mutuos</span>
-            </div>
+        <div class="xuf-nav">
+          <span class="xuf-brand">Unfollowers-X <span class="xuf-ver">v2.0</span></span>
+          <div class="xuf-tabs">
+            <button
+              class="xuf-tab ${ufDisabled ? 'xuf-tab-disabled' : 'xuf-tab-active'}"
+              id="xuf-tab-uf"
+              ${ufDisabled ? 'disabled' : ''}
+            >Modulo Unfollower</button>
+            <button
+              class="xuf-tab ${afDisabled ? 'xuf-tab-disabled' : ''} ${!afDisabled ? 'xuf-tab-active' : ''}"
+              id="xuf-tab-af"
+              ${afDisabled ? 'disabled' : ''}
+            >Modulo Auto-Follow</button>
           </div>
-          <button class="xuf-btn xuf-btn-ghost" id="xuf-cancel-scan">Cancelar</button>
+          <button class="xuf-close" id="xuf-close-btn">Cerrar</button>
         </div>
+        <div class="xuf-body xuf-body-center" id="xuf-body"></div>
       `;
-      document.getElementById('xuf-cancel-scan').onclick = () => {
-        state.stopFlag = true;
+      document.getElementById('xuf-close-btn').onclick = () => {
+        if (S.running) {
+          S.stop = true;
+        }
+        this.unmount();
+      };
+      document.getElementById('xuf-tab-uf').onclick = () => {
+        if (ufDisabled) return;
+        if (S.running) { this._showModuleWarn(); return; }
+        CTRL.startUnfollower();
+      };
+      document.getElementById('xuf-tab-af').onclick = () => {
+        if (afDisabled) return;
+        if (S.running) { this._showModuleWarn(); return; }
+        CTRL.startAutoFollow();
       };
     },
 
-    /** Actualiza los contadores de la fase de escaneo. */
-    updateScanProgress(scanned, found) {
-      const sub = document.getElementById('xuf-scan-sub');
-      const ns  = document.getElementById('xuf-n-scanned');
-      const nf  = document.getElementById('xuf-n-found');
-      if (sub) sub.textContent = 'Escaneando usuario ' + scanned + '...';
-      if (ns)  ns.textContent  = scanned;
-      if (nf)  nf.textContent  = found;
+    _showModuleWarn() {
+      const body = this._body();
+      if (!body) return;
+      const mod = S.activeModule === 'unfollow' ? 'Unfollower' : 'Auto-Follow';
+      const existing = body.querySelector('.xuf-module-warn');
+      if (existing) { existing.remove(); return; }
+      const w = document.createElement('div');
+      w.className = 'xuf-module-warn xuf-anim';
+      w.innerHTML = `El modulo <strong>${mod}</strong> esta en ejecucion. Completa o detiene el proceso antes de cambiar de modulo.`;
+      body.appendChild(w);
+      setTimeout(() => w.remove(), 3500);
     },
 
-    // -----------------------------------------------------------
-    // FASE 2: Tabla de resultados
-    // -----------------------------------------------------------
+    _body() {
+      return document.getElementById('xuf-body');
+    },
 
-    /**
-     * Renderiza el panel con la tabla de no-mutuos y checkboxes.
-     * El panel ocupa el 100% del overlay con header y footer fijos.
-     */
-    showResultsPhase(nonMutuals) {
-      if (!this._el) return;
-      this._el.classList.add('xuf-panel-mode');
+    _setBodyMode(mode) {
+      const b = this._body();
+      if (!b) return;
+      b.className = 'xuf-body ' + (mode === 'panel' ? 'xuf-body-panel' : 'xuf-body-center');
+    },
 
-      const showWarning = nonMutuals.length > CONFIG.MAX_UNFOLLOWS;
-      const warningHTML = showWarning ? `
-        <div class="xuf-warn-bar">
-          <strong>Atencion:</strong> Se detectaron ${nonMutuals.length} no-mutuos,
-          pero el limite de seguridad es <strong>${CONFIG.MAX_UNFOLLOWS} por sesion</strong>.
-          Ejecuta el script varias veces para procesar el resto.
-        </div>
-      ` : '';
+    // -----------------------------------------------------------------
+    // Dashboard — pantalla inicial segun pagina detectada
+    // -----------------------------------------------------------------
+    showDashboard(pageType) {
+      this._setBodyMode('center');
+      const body = this._body();
+      if (!body) return;
 
-      const rows = nonMutuals.map(({ username, displayName }) => {
-        const initial = (displayName[0] || username[0] || 'U').toUpperCase();
-        const color   = initialColor(initial);
-        return `
-          <tr class="xuf-tr">
-            <td class="xuf-td xuf-td-cb">
-              <input type="checkbox" class="xuf-cb" data-u="${esc(username)}" checked />
-            </td>
-            <td class="xuf-td xuf-td-av">
-              <div class="xuf-avatar" style="background:${color}">${esc(initial)}</div>
-            </td>
-            <td class="xuf-td">
-              <span class="xuf-u-name">${esc(displayName)}</span>
-              <span class="xuf-u-handle">@${esc(username)}</span>
-            </td>
-          </tr>
+      let content;
+      if (pageType === 'following') {
+        content = `
+          <div class="xuf-page-ind xuf-anim">
+            <span class="xuf-page-ind-url">${esc(window.location.pathname)}</span>
+            <span class="xuf-page-ind-status ok">Pagina /following detectada</span>
+          </div>
+          <p class="xuf-heading">Modulo Unfollower disponible</p>
+          <p class="xuf-sub">Detectara todas las cuentas que no te siguen de vuelta y te permitira dejar de seguirlas con delays precisos.</p>
+          <button class="xuf-btn xuf-btn-primary" id="xuf-start-uf">Iniciar Modulo Unfollower</button>
         `;
-      }).join('');
-
-      this._el.innerHTML = `
-        <div class="xuf-panel xuf-anim">
-          <div class="xuf-panel-hd">
-            <p class="xuf-brand">Unfollowers-X &nbsp; v1.2</p>
-            <div class="xuf-panel-hd-r">
-              <span class="xuf-counter-lbl">
-                <strong id="xuf-sel-cnt">${nonMutuals.length}</strong>
-                de ${nonMutuals.length} seleccionados
-              </span>
-              <button class="xuf-btn-icon" id="xuf-btn-close" title="Cerrar">X</button>
-            </div>
+      } else if (pageType === 'followers') {
+        const cooldownActive = AF.batchCooldownActive();
+        const cooldownNote   = cooldownActive
+          ? `<div class="xuf-module-warn" style="max-width:400px">Cooldown activo. Proximo lote disponible en <strong>${fmtMs(AF.batchCooldownRemaining())}</strong></div>`
+          : '';
+        content = `
+          <div class="xuf-page-ind xuf-anim">
+            <span class="xuf-page-ind-url">${esc(window.location.pathname)}</span>
+            <span class="xuf-page-ind-status ok">Pagina /followers detectada</span>
           </div>
-          ${warningHTML}
-          <div class="xuf-toolbar">
-            <button class="xuf-btn xuf-btn-ghost" id="xuf-sel-all">Seleccionar todo</button>
-            <button class="xuf-btn xuf-btn-ghost" id="xuf-desel-all">Deseleccionar todo</button>
-          </div>
-          <div class="xuf-table-scroll">
-            <table class="xuf-table">
-              <tbody>${rows}</tbody>
-            </table>
-          </div>
-          <div class="xuf-panel-ft">
-            <p class="xuf-limit-note">Maximo ${CONFIG.MAX_UNFOLLOWS} unfollows por sesion</p>
-            <button class="xuf-btn xuf-btn-primary" id="xuf-btn-unfollow">
-              Dejar de seguir seleccionados
-            </button>
-          </div>
-        </div>
-      `;
-
-      // Inicializar selected con todos los usuarios
-      state.selected.clear();
-      nonMutuals.forEach(u => state.selected.add(u.username));
-
-      // Checkboxes individuales
-      this._el.querySelectorAll('.xuf-cb').forEach(cb => {
-        cb.addEventListener('change', () => {
-          const u = cb.dataset.u;
-          cb.checked ? state.selected.add(u) : state.selected.delete(u);
-          this._refreshSelCounter(nonMutuals.length);
-          this._refreshUnfollowBtn();
-        });
-      });
-
-      document.getElementById('xuf-sel-all').onclick = () => {
-        this._el.querySelectorAll('.xuf-cb').forEach(cb => {
-          cb.checked = true;
-          state.selected.add(cb.dataset.u);
-        });
-        this._refreshSelCounter(nonMutuals.length);
-        this._refreshUnfollowBtn();
-      };
-
-      document.getElementById('xuf-desel-all').onclick = () => {
-        this._el.querySelectorAll('.xuf-cb').forEach(cb => {
-          cb.checked = false;
-          state.selected.delete(cb.dataset.u);
-        });
-        this._refreshSelCounter(nonMutuals.length);
-        this._refreshUnfollowBtn();
-      };
-
-      document.getElementById('xuf-btn-close').onclick = () => this.unmount();
-
-      document.getElementById('xuf-btn-unfollow').onclick = () => {
-        if (state.selected.size === 0) return;
-        runUnfollow();
-      };
-    },
-
-    _refreshSelCounter(total) {
-      const el = document.getElementById('xuf-sel-cnt');
-      if (el) el.textContent = state.selected.size;
-    },
-
-    _refreshUnfollowBtn() {
-      const btn = document.getElementById('xuf-btn-unfollow');
-      if (btn) btn.disabled = state.selected.size === 0;
-    },
-
-    // -----------------------------------------------------------
-    // FASE 3: Progreso de unfollow
-    // -----------------------------------------------------------
-
-    /** Renderiza la pantalla de progreso de unfollow. */
-    showUnfollowPhase(total) {
-      if (!this._el) return;
-      this._el.classList.remove('xuf-panel-mode');
-      this._el.innerHTML = `
-        <div class="xuf-card xuf-anim">
-          <p class="xuf-brand">Unfollowers-X &nbsp; v1.2</p>
-          <p class="xuf-heading" id="xuf-uf-heading">Preparando...</p>
-          <p class="xuf-target" id="xuf-uf-target"></p>
-          <div class="xuf-prog-wrap">
-            <div class="xuf-prog-track">
-              <div class="xuf-prog-fill" id="xuf-prog" style="width:0%"></div>
-            </div>
-            <span class="xuf-prog-lbl" id="xuf-prog-lbl">0 / ${total}</span>
-          </div>
-          <p class="xuf-sub" id="xuf-countdown"></p>
-          <button class="xuf-btn xuf-btn-ghost" id="xuf-btn-stop">Detener</button>
-        </div>
-      `;
-      document.getElementById('xuf-btn-stop').onclick = () => {
-        state.stopFlag = true;
-        const btn = document.getElementById('xuf-btn-stop');
-        if (btn) { btn.textContent = 'Deteniendo...'; btn.disabled = true; }
-      };
-    },
-
-    /** Actualiza heading, usuario activo y barra de progreso. */
-    updateUnfollowProgress(current, total, username) {
-      const pct     = Math.round((current / total) * 100);
-      const fill    = document.getElementById('xuf-prog');
-      const lbl     = document.getElementById('xuf-prog-lbl');
-      const heading = document.getElementById('xuf-uf-heading');
-      const target  = document.getElementById('xuf-uf-target');
-
-      if (fill)    fill.style.width  = pct + '%';
-      if (lbl)     lbl.textContent   = current + ' / ' + total;
-      if (heading) heading.textContent = 'Dejando de seguir...';
-      if (target)  target.textContent = '@' + username;
-    },
-
-    /**
-     * Muestra el countdown de espera anti-baneo en la UI.
-     * Se ejecuta segundo a segundo para que el usuario vea el progreso.
-     */
-    async runCountdown(totalSecs, current, total) {
-      const el = document.getElementById('xuf-countdown');
-      for (let r = totalSecs; r > 0; r--) {
-        if (state.stopFlag) break;
-        if (el) el.textContent = 'Esperando ' + r + 's antes del siguiente...';
-        await sleep(1_000);
-      }
-      if (el) el.textContent = '';
-    },
-
-    // -----------------------------------------------------------
-    // FASE 4: Pantalla final
-    // -----------------------------------------------------------
-
-    /** Renderiza la pantalla de finalizacion con el resumen. */
-    showDonePhase(count, limitReached, stopped) {
-      if (!this._el) return;
-      this._el.classList.remove('xuf-panel-mode');
-
-      let subtitle;
-      if (stopped) {
-        subtitle = 'Proceso detenido manualmente.';
-      } else if (limitReached) {
-        subtitle = `Limite de sesion alcanzado (${CONFIG.MAX_UNFOLLOWS}). Espera 2-3 horas antes de continuar para proteger tu cuenta.`;
+          <p class="xuf-heading">Modulo Auto-Follow disponible</p>
+          <p class="xuf-sub">Cargara los seguidores de este perfil en bloques de ${CFG.AF_CHUNK_SIZE} y te permitira seguir hasta ${CFG.AF_MAX_PER_BATCH} por lote.</p>
+          ${cooldownNote}
+          <button class="xuf-btn xuf-btn-primary" id="xuf-start-af" ${cooldownActive ? 'disabled' : ''}>
+            Iniciar Modulo Auto-Follow
+          </button>
+        `;
       } else {
-        subtitle = count === 0
-          ? 'No se encontraron cuentas no-mutuas.'
-          : `${count} ${count === 1 ? 'usuario eliminado' : 'usuarios eliminados'} correctamente.`;
+        content = `
+          <div class="xuf-page-ind xuf-anim">
+            <span class="xuf-page-ind-url">${esc(window.location.pathname)}</span>
+            <span class="xuf-page-ind-status">Pagina no reconocida</span>
+          </div>
+          <p class="xuf-heading">Navega a la pagina correcta</p>
+          <div class="xuf-sub" style="text-align:left;max-width:380px">
+            <p style="margin-bottom:8px"><strong style="color:#888">Modulo Unfollower:</strong><br>x.com/TU_USUARIO/following</p>
+            <p><strong style="color:#888">Modulo Auto-Follow:</strong><br>x.com/@USUARIO/followers</p>
+          </div>
+          <button class="xuf-btn xuf-btn-ghost" id="xuf-redetect">Re-detectar pagina</button>
+        `;
       }
 
-      this._el.innerHTML = `
-        <div class="xuf-card xuf-anim">
-          <p class="xuf-brand">Unfollowers-X &nbsp; v1.2</p>
-          ${count > 0 ? `<p class="xuf-big-num">${count}</p>` : ''}
-          <p class="xuf-heading">${limitReached ? 'Limite alcanzado' : stopped ? 'Proceso detenido' : 'Completado'}</p>
-          <p class="xuf-sub">${esc(subtitle)}</p>
-          <button class="xuf-btn xuf-btn-primary" id="xuf-btn-final-close">Cerrar</button>
-        </div>
-      `;
+      body.innerHTML = `<div class="xuf-card xuf-anim">${content}</div>`;
 
-      document.getElementById('xuf-btn-final-close').onclick = () => this.unmount();
+      document.getElementById('xuf-start-uf')?.addEventListener('click', () => CTRL.startUnfollower());
+      document.getElementById('xuf-start-af')?.addEventListener('click', () => CTRL.startAutoFollow());
+      document.getElementById('xuf-redetect')?.addEventListener('click', () => CTRL.init());
+    },
+
+    // -----------------------------------------------------------------
+    // Unfollower — fases de UI
+    // -----------------------------------------------------------------
+    uf: {
+      showScan() {
+        UI._setBodyMode('center');
+        const b = UI._body();
+        if (!b) return;
+        b.innerHTML = `
+          <div class="xuf-card xuf-anim">
+            <div class="xuf-spinner"></div>
+            <p class="xuf-heading">Escaneando lista de seguidos</p>
+            <p class="xuf-sub" id="xuf-scan-sub">Iniciando escaneo...</p>
+            <div class="xuf-stats">
+              <div class="xuf-stat">
+                <span class="xuf-stat-n" id="xuf-sc-n">0</span>
+                <span class="xuf-stat-l">Revisados</span>
+              </div>
+              <div class="xuf-stat">
+                <span class="xuf-stat-n" id="xuf-sc-f">0</span>
+                <span class="xuf-stat-l">No-mutuos</span>
+              </div>
+            </div>
+            <button class="xuf-btn xuf-btn-ghost" id="xuf-uf-cancel">Cancelar</button>
+          </div>
+        `;
+        document.getElementById('xuf-uf-cancel').onclick = () => {
+          S.stop = true;
+        };
+      },
+
+      updateScan(n, found) {
+        const sub = document.getElementById('xuf-scan-sub');
+        const nn  = document.getElementById('xuf-sc-n');
+        const nf  = document.getElementById('xuf-sc-f');
+        if (sub) sub.textContent = 'Escaneando usuario ' + n + '...';
+        if (nn)  nn.textContent  = n;
+        if (nf)  nf.textContent  = found;
+      },
+
+      showResults(nonMutuals) {
+        UI._setBodyMode('panel');
+        const b = UI._body();
+        if (!b) return;
+
+        const rows = nonMutuals.map(({ username, displayName }) => {
+          const ini   = (displayName[0] || username[0] || '?').toUpperCase();
+          const color = icolor(ini);
+          const chk   = S.uf.selected.has(username) ? 'checked' : '';
+          return `
+            <tr class="xuf-tr">
+              <td class="xuf-td xuf-td-cb">
+                <input type="checkbox" class="xuf-cb" data-u="${esc(username)}" ${chk}/>
+              </td>
+              <td class="xuf-td xuf-td-av">
+                <div class="xuf-avatar" style="background:${color}">${esc(ini)}</div>
+              </td>
+              <td class="xuf-td">
+                <span class="xuf-u-name">${esc(displayName)}</span>
+                <span class="xuf-u-handle">@${esc(username)}</span>
+              </td>
+            </tr>
+          `;
+        }).join('');
+
+        b.innerHTML = `
+          <div class="xuf-panel xuf-anim">
+            <div class="xuf-panel-hd">
+              <span class="xuf-sub">No-mutuos detectados</span>
+              <div class="xuf-panel-hd-r">
+                <span class="xuf-sel-lbl">
+                  <strong id="xuf-uf-sel-n">${nonMutuals.length}</strong> de ${nonMutuals.length} seleccionados
+                </span>
+              </div>
+            </div>
+            <div class="xuf-toolbar">
+              <button class="xuf-btn xuf-btn-ghost" id="xuf-uf-sel-all">Seleccionar todo</button>
+              <button class="xuf-btn xuf-btn-ghost" id="xuf-uf-desel">Deseleccionar todo</button>
+            </div>
+            <div class="xuf-table-scroll">
+              <table class="xuf-table"><tbody>${rows}</tbody></table>
+            </div>
+            <div class="xuf-panel-ft">
+              <p class="xuf-ft-note">Sin limite de unfollows por sesion — cooldown cada ${CFG.UF_CD_EVERY} acciones</p>
+              <button class="xuf-btn xuf-btn-danger" id="xuf-uf-run">
+                Dejar de seguir seleccionados
+              </button>
+            </div>
+          </div>
+        `;
+
+        // Sync checkboxes con state
+        S.uf.selected.clear();
+        nonMutuals.forEach(u => S.uf.selected.add(u.username));
+
+        const refreshCnt = (total) => {
+          const el = document.getElementById('xuf-uf-sel-n');
+          if (el) el.textContent = S.uf.selected.size;
+          const btn = document.getElementById('xuf-uf-run');
+          if (btn) btn.disabled = S.uf.selected.size === 0;
+        };
+
+        b.querySelectorAll('.xuf-cb').forEach(cb => {
+          cb.addEventListener('change', () => {
+            cb.checked ? S.uf.selected.add(cb.dataset.u) : S.uf.selected.delete(cb.dataset.u);
+            refreshCnt(nonMutuals.length);
+          });
+        });
+
+        document.getElementById('xuf-uf-sel-all').onclick = () => {
+          b.querySelectorAll('.xuf-cb').forEach(cb => { cb.checked = true; S.uf.selected.add(cb.dataset.u); });
+          refreshCnt(nonMutuals.length);
+        };
+        document.getElementById('xuf-uf-desel').onclick = () => {
+          b.querySelectorAll('.xuf-cb').forEach(cb => { cb.checked = false; S.uf.selected.delete(cb.dataset.u); });
+          refreshCnt(nonMutuals.length);
+        };
+        document.getElementById('xuf-uf-run').onclick = () => {
+          if (S.uf.selected.size > 0) CTRL.runUnfollow();
+        };
+      },
+
+      showRunning(total) {
+        UI._setBodyMode('center');
+        const b = UI._body();
+        if (!b) return;
+        b.innerHTML = `
+          <div class="xuf-card xuf-anim">
+            <p class="xuf-heading" id="xuf-uf-h">Preparando...</p>
+            <p class="xuf-target" id="xuf-uf-u"></p>
+            <div class="xuf-prog-wrap">
+              <div class="xuf-prog-track">
+                <div class="xuf-prog-fill" id="xuf-uf-prog" style="width:0%"></div>
+              </div>
+              <span class="xuf-prog-lbl" id="xuf-uf-lbl">0 / ${total}</span>
+            </div>
+            <div class="xuf-cd-banner" id="xuf-uf-cd" style="display:none"></div>
+            <button class="xuf-btn xuf-btn-ghost" id="xuf-uf-stop">Detener</button>
+          </div>
+        `;
+        document.getElementById('xuf-uf-stop').onclick = () => {
+          S.stop = true;
+          const b2 = document.getElementById('xuf-uf-stop');
+          if (b2) { b2.textContent = 'Deteniendo...'; b2.disabled = true; }
+        };
+      },
+
+      updateProgress(cur, total, username, remMs) {
+        const pct = Math.round((cur / total) * 100);
+        const h   = document.getElementById('xuf-uf-h');
+        const u   = document.getElementById('xuf-uf-u');
+        const p   = document.getElementById('xuf-uf-prog');
+        const l   = document.getElementById('xuf-uf-lbl');
+        const cd  = document.getElementById('xuf-uf-cd');
+        if (h)  h.textContent = 'Dejando de seguir...';
+        if (u)  u.textContent = '@' + username;
+        if (p)  p.style.width = pct + '%';
+        if (l)  l.textContent = cur + ' / ' + total + '  —  Espera ' + fmtSec(remMs);
+        if (cd) cd.style.display = 'none';
+      },
+
+      updateCooldown(remMs, cur, total) {
+        const h  = document.getElementById('xuf-uf-h');
+        const u  = document.getElementById('xuf-uf-u');
+        const cd = document.getElementById('xuf-uf-cd');
+        if (h)  h.textContent = 'Cooldown activo';
+        if (u)  u.textContent = cur + ' de ' + total + ' completados';
+        if (cd) {
+          cd.style.display = 'block';
+          cd.innerHTML = `Reanudando en <strong>${fmtMs(remMs)}</strong>`;
+        }
+      },
+
+      showDone(count, stopped) {
+        UI._setBodyMode('center');
+        const b = UI._body();
+        if (!b) return;
+        const msg = stopped
+          ? 'Proceso detenido manualmente.'
+          : `Unfollowados ${count} usuario${count !== 1 ? 's' : ''} con exito.`;
+        b.innerHTML = `
+          <div class="xuf-card xuf-anim">
+            ${count > 0 ? `<p class="xuf-big-num">${count}</p>` : ''}
+            <p class="xuf-heading">Completado</p>
+            <p class="xuf-sub">${esc(msg)}</p>
+            <div style="display:flex;gap:8px">
+              <button class="xuf-btn xuf-btn-ghost" id="xuf-uf-again">Ejecutar nuevamente</button>
+              <button class="xuf-btn xuf-btn-primary" id="xuf-uf-dash">Volver al Dashboard</button>
+            </div>
+          </div>
+        `;
+        document.getElementById('xuf-uf-again').onclick = () => CTRL.startUnfollower();
+        document.getElementById('xuf-uf-dash').onclick  = () => CTRL.backToDashboard();
+      },
+    },
+
+    // -----------------------------------------------------------------
+    // Auto-Follow — fases de UI
+    // -----------------------------------------------------------------
+    af: {
+      showLoading(count) {
+        UI._setBodyMode('center');
+        const b = UI._body();
+        if (!b) return;
+        b.innerHTML = `
+          <div class="xuf-card xuf-anim">
+            <div class="xuf-spinner"></div>
+            <p class="xuf-heading">Cargando seguidores</p>
+            <p class="xuf-sub" id="xuf-af-sub">Iniciando...</p>
+            <div class="xuf-stats">
+              <div class="xuf-stat">
+                <span class="xuf-stat-n" id="xuf-af-n">${count}</span>
+                <span class="xuf-stat-l">Cargados</span>
+              </div>
+            </div>
+            <button class="xuf-btn xuf-btn-ghost" id="xuf-af-cancel">Cancelar</button>
+          </div>
+        `;
+        document.getElementById('xuf-af-cancel').onclick = () => { S.stop = true; };
+      },
+
+      updateLoading(count) {
+        const sub = document.getElementById('xuf-af-sub');
+        const n   = document.getElementById('xuf-af-n');
+        if (sub) sub.textContent = 'Cargando usuarios ' + count + '...';
+        if (n)   n.textContent   = count;
+      },
+
+      showResults(candidates) {
+        UI._setBodyMode('panel');
+        const b = UI._body();
+        if (!b) return;
+
+        const isAFLimit = candidates.length > CFG.AF_MAX_PER_BATCH;
+
+        const rows = candidates.map(({ username, displayName }) => {
+          const ini   = (displayName[0] || username[0] || '?').toUpperCase();
+          const color = icolor(ini);
+          const chk   = S.af.selected.has(username) ? 'checked' : '';
+          return `
+            <tr class="xuf-tr">
+              <td class="xuf-td xuf-td-cb">
+                <input type="checkbox" class="xuf-cb" data-u="${esc(username)}" ${chk}/>
+              </td>
+              <td class="xuf-td xuf-td-av">
+                <div class="xuf-avatar" style="background:${color}">${esc(ini)}</div>
+              </td>
+              <td class="xuf-td">
+                <span class="xuf-u-name">${esc(displayName)}</span>
+                <span class="xuf-u-handle">@${esc(username)}</span>
+              </td>
+            </tr>
+          `;
+        }).join('');
+
+        const limitBar = isAFLimit ? `
+          <div class="xuf-limit-bar">
+            <strong>Atencion:</strong> Solo se procesaran los primeros <strong>${CFG.AF_MAX_PER_BATCH}</strong> seleccionados por lote.
+          </div>` : '';
+
+        const loadMoreBtn = !S.af.scanDone ? `
+          <button class="xuf-btn xuf-btn-ghost" id="xuf-af-more">
+            Cargar mas seguidores (+${CFG.AF_CHUNK_SIZE})
+          </button>` : `<span class="xuf-ft-note">Lista completa cargada</span>`;
+
+        b.innerHTML = `
+          <div class="xuf-panel xuf-anim">
+            <div class="xuf-panel-hd">
+              <span class="xuf-sub">Seguidores disponibles para seguir</span>
+              <div class="xuf-panel-hd-r">
+                <span class="xuf-sel-lbl">
+                  <strong id="xuf-af-sel-n">${candidates.length}</strong> de ${candidates.length} seleccionados
+                </span>
+              </div>
+            </div>
+            ${limitBar}
+            <div class="xuf-toolbar">
+              <button class="xuf-btn xuf-btn-ghost" id="xuf-af-sel-all">Seleccionar todo</button>
+              <button class="xuf-btn xuf-btn-ghost" id="xuf-af-desel">Deseleccionar todo</button>
+            </div>
+            <div class="xuf-table-scroll">
+              <table class="xuf-table"><tbody>${rows}</tbody></table>
+            </div>
+            <div class="xuf-panel-ft">
+              ${loadMoreBtn}
+              <button class="xuf-btn xuf-btn-primary" id="xuf-af-run">
+                Seguir seleccionados
+              </button>
+            </div>
+          </div>
+        `;
+
+        // Sync con state
+        S.af.selected.clear();
+        candidates.forEach(u => S.af.selected.add(u.username));
+
+        const refreshCnt = () => {
+          const el = document.getElementById('xuf-af-sel-n');
+          if (el) el.textContent = S.af.selected.size;
+          const btn = document.getElementById('xuf-af-run');
+          if (btn) btn.disabled = S.af.selected.size === 0;
+        };
+
+        b.querySelectorAll('.xuf-cb').forEach(cb => {
+          cb.addEventListener('change', () => {
+            cb.checked ? S.af.selected.add(cb.dataset.u) : S.af.selected.delete(cb.dataset.u);
+            refreshCnt();
+          });
+        });
+
+        document.getElementById('xuf-af-sel-all').onclick = () => {
+          b.querySelectorAll('.xuf-cb').forEach(cb => { cb.checked = true; S.af.selected.add(cb.dataset.u); });
+          refreshCnt();
+        };
+        document.getElementById('xuf-af-desel').onclick = () => {
+          b.querySelectorAll('.xuf-cb').forEach(cb => { cb.checked = false; S.af.selected.delete(cb.dataset.u); });
+          refreshCnt();
+        };
+        document.getElementById('xuf-af-more')?.addEventListener('click', () => CTRL.loadMoreFollowers());
+        document.getElementById('xuf-af-run').onclick = () => {
+          if (S.af.selected.size > 0) CTRL.runAutoFollow();
+        };
+      },
+
+      showRunning(total) {
+        UI._setBodyMode('center');
+        const b = UI._body();
+        if (!b) return;
+        b.innerHTML = `
+          <div class="xuf-card xuf-anim">
+            <p class="xuf-heading" id="xuf-af-h">Preparando...</p>
+            <p class="xuf-target" id="xuf-af-u"></p>
+            <div class="xuf-prog-wrap">
+              <div class="xuf-prog-track">
+                <div class="xuf-prog-fill" id="xuf-af-prog" style="width:0%"></div>
+              </div>
+              <span class="xuf-prog-lbl" id="xuf-af-lbl">0 / ${total}</span>
+            </div>
+            <div class="xuf-cd-banner" id="xuf-af-cd" style="display:none"></div>
+            <button class="xuf-btn xuf-btn-ghost" id="xuf-af-stop">Detener</button>
+          </div>
+        `;
+        document.getElementById('xuf-af-stop').onclick = () => {
+          S.stop = true;
+          const s = document.getElementById('xuf-af-stop');
+          if (s) { s.textContent = 'Deteniendo...'; s.disabled = true; }
+        };
+      },
+
+      updateProgress(cur, total, username, remMs) {
+        const pct = Math.round((cur / total) * 100);
+        const h   = document.getElementById('xuf-af-h');
+        const u   = document.getElementById('xuf-af-u');
+        const p   = document.getElementById('xuf-af-prog');
+        const l   = document.getElementById('xuf-af-lbl');
+        const cd  = document.getElementById('xuf-af-cd');
+        if (h)  h.textContent = 'Siguiendo a...';
+        if (u)  u.textContent = '@' + username;
+        if (p)  p.style.width = pct + '%';
+        if (l)  l.textContent = cur + ' / ' + total + '  —  Espera ' + fmtSec(remMs);
+        if (cd) cd.style.display = 'none';
+      },
+
+      updateCooldown(remMs, cur, total) {
+        const h  = document.getElementById('xuf-af-h');
+        const u  = document.getElementById('xuf-af-u');
+        const cd = document.getElementById('xuf-af-cd');
+        if (h)  h.textContent = 'Cooldown activo';
+        if (u)  u.textContent = cur + ' de ' + total + ' completados';
+        if (cd) {
+          cd.style.display = 'block';
+          cd.innerHTML = `Reanudando en <strong>${fmtMs(remMs)}</strong>`;
+        }
+      },
+
+      showDone(count, stopped) {
+        UI._setBodyMode('center');
+        const b = UI._body();
+        if (!b) return;
+        const msg = stopped
+          ? 'Proceso detenido manualmente.'
+          : `Seguidos ${count} usuario${count !== 1 ? 's' : ''}. Espera 2 horas antes de la proxima sesion.`;
+        b.innerHTML = `
+          <div class="xuf-card xuf-anim">
+            ${count > 0 ? `<p class="xuf-big-num">${count}</p>` : ''}
+            <p class="xuf-heading">${stopped ? 'Proceso detenido' : 'Lote completado'}</p>
+            <p class="xuf-sub">${esc(msg)}</p>
+            <button class="xuf-btn xuf-btn-primary" id="xuf-af-dash">Volver al Dashboard</button>
+          </div>
+        `;
+        document.getElementById('xuf-af-dash').onclick = () => CTRL.backToDashboard();
+      },
     },
   };
 
-  // =============================================================
-  // CONTROLADORES
-  // =============================================================
+  // =================================================================
+  // CONTROLADOR PRINCIPAL
+  // Orquesta la comunicacion entre modulos de datos y UI.
+  // =================================================================
+  const CTRL = {
+    /** Detecta la pagina, construye el shell y muestra el dashboard */
+    init() {
+      const page = detectPage();
+      S.sessionStart = S.sessionStart || Date.now();
+      S.running = false;
+      S.stop    = false;
 
-  /**
-   * Orquesta la fase de escaneo:
-   * monta el overlay, ejecuta Scraper en background y
-   * transiciona a resultados o pantalla final segun resultado.
-   */
-  async function runScan() {
-    state.sessionStart = Date.now();
-    state.stopFlag     = false;
-    state.nonMutuals   = [];
-    state.selected.clear();
-    state.phase        = 'scanning';
+      // Actualizar tabs segun pagina
+      UI.buildShell(page);
+      UI.showDashboard(page);
+    },
 
-    UI.showScanPhase();
+    backToDashboard() {
+      S.activeModule = null;
+      S.running      = false;
+      S.stop         = false;
+      // Resetear estado del modulo que se usó
+      S.uf.phase     = 'idle';
+      S.af.phase     = 'idle';
+      this.init();
+    },
 
-    await Scraper.run((scanned, found) => {
-      UI.updateScanProgress(scanned, found);
-    });
+    // -----------------------------------------------------------------
+    // Unfollower — flujo completo
+    // -----------------------------------------------------------------
+    startUnfollower() {
+      S.activeModule   = 'unfollow';
+      S.running        = true;
+      S.stop           = false;
+      S.uf.nonMutuals  = [];
+      S.uf.selected.clear();
+      S.uf.count       = 0;
+      S.uf.phase       = 'scanning';
 
-    if (state.stopFlag) {
-      UI.unmount();
-      return;
-    }
+      // Asegurarse que el tab UF este activo visualmente
+      document.getElementById('xuf-tab-uf')?.classList.add('xuf-tab-active');
+      document.getElementById('xuf-tab-af')?.classList.remove('xuf-tab-active');
 
-    if (state.nonMutuals.length === 0) {
-      state.phase = 'done';
-      UI.showDonePhase(0, false, false);
-      return;
-    }
+      UI.uf.showScan();
+      this._doUnfollowerScan();
+    },
 
-    state.phase = 'results';
-    UI.showResultsPhase(state.nonMutuals);
-  }
+    async _doUnfollowerScan() {
+      await SCRAPER.scanUnfollowers((n, found) => UI.uf.updateScan(n, found));
 
-  /**
-   * Orquesta la fase de unfollow:
-   * toma la seleccion del estado global, ejecuta Unfollower
-   * y muestra la pantalla de finalizacion.
-   */
-  async function runUnfollow() {
-    const queue = state.nonMutuals.filter(u => state.selected.has(u.username));
-    if (queue.length === 0) return;
+      if (S.stop) { CTRL.backToDashboard(); return; }
 
-    const batch = queue.slice(0, CONFIG.MAX_UNFOLLOWS);
+      if (S.uf.nonMutuals.length === 0) {
+        S.running = false;
+        UI.uf.showDone(0, false);
+        return;
+      }
 
-    state.stopFlag = false;
-    state.phase    = 'unfollowing';
+      S.uf.phase = 'results';
+      S.running  = false; // resultados no cuentan como "corriendo"
+      UI.uf.showResults(S.uf.nonMutuals);
+    },
 
-    UI.showUnfollowPhase(batch.length);
+    runUnfollow() {
+      const queue = S.uf.nonMutuals.filter(u => S.uf.selected.has(u.username));
+      if (!queue.length) return;
 
-    const { done, limitReached, stopped } = await Unfollower.processQueue(
-      batch,
-      (cur, tot, user) => UI.updateUnfollowProgress(cur, tot, user),
-      (secs, cur, tot) => UI.runCountdown(secs, cur, tot)
-    );
+      S.running  = true;
+      S.stop     = false;
+      S.uf.phase = 'running';
+      UI.uf.showRunning(queue.length);
 
-    state.phase = 'done';
-    UI.showDonePhase(done, limitReached, stopped);
-  }
+      UF.run(
+        queue,
+        (cur, total, user, remMs) => UI.uf.updateProgress(cur, total, user, remMs),
+        (remMs, cur, total)       => UI.uf.updateCooldown(remMs, cur, total)
+      ).then(({ done, stopped }) => {
+        S.running  = false;
+        S.uf.phase = 'done';
+        UI.uf.showDone(done, stopped);
+      });
+    },
 
-  // =============================================================
+    // -----------------------------------------------------------------
+    // Auto-Follow — flujo completo
+    // -----------------------------------------------------------------
+    startAutoFollow() {
+      if (AF.batchCooldownActive()) {
+        this.init(); // re-render dashboard con el aviso de cooldown
+        return;
+      }
+
+      S.activeModule  = 'autofollow';
+      S.running       = true;
+      S.stop          = false;
+      S.af.candidates = [];
+      S.af.selected.clear();
+      S.af.seen.clear();
+      S.af.count      = 0;
+      S.af.phase      = 'loading';
+      S.af.scanDone   = false;
+      S.af.stuckCount = 0;
+      S.af.lastHeight = 0;
+
+      document.getElementById('xuf-tab-af')?.classList.add('xuf-tab-active');
+      document.getElementById('xuf-tab-uf')?.classList.remove('xuf-tab-active');
+
+      UI.af.showLoading(0);
+      this._doFollowerLoad();
+    },
+
+    async _doFollowerLoad() {
+      await SCRAPER.scanFollowers(count => UI.af.updateLoading(count));
+
+      if (S.stop) { CTRL.backToDashboard(); return; }
+
+      S.running  = false;
+      S.af.phase = 'results';
+      UI.af.showResults(S.af.candidates);
+    },
+
+    /** Carga el siguiente chunk de seguidores */
+    loadMoreFollowers() {
+      if (S.af.scanDone) return;
+      S.running = true;
+      UI.af.showLoading(S.af.candidates.length);
+      this._doFollowerLoad();
+    },
+
+    runAutoFollow() {
+      const queue = S.af.candidates
+        .filter(u => S.af.selected.has(u.username))
+        .slice(0, CFG.AF_MAX_PER_BATCH);
+      if (!queue.length) return;
+
+      S.running  = true;
+      S.stop     = false;
+      S.af.phase = 'running';
+      UI.af.showRunning(queue.length);
+
+      AF.run(
+        queue,
+        (cur, total, user, remMs) => UI.af.updateProgress(cur, total, user, remMs),
+        (remMs, cur, total)       => UI.af.updateCooldown(remMs, cur, total)
+      ).then(({ done, stopped }) => {
+        S.running  = false;
+        S.af.phase = 'done';
+        UI.af.showDone(done, stopped);
+      });
+    },
+  };
+
+  // =================================================================
   // INICIALIZACION
-  // =============================================================
-
-  if (!window.location.href.includes('/following')) {
-    const proceed = confirm(
-      'Unfollowers-X v1.2\n\n' +
-      'Este script debe ejecutarse en la pagina /following:\n' +
-      'https://x.com/TU_USERNAME/following\n\n' +
-      'Continuar de todas formas?'
-    );
-    if (!proceed) return;
-  }
+  // =================================================================
 
   UI.mount();
-  runScan();
+  CTRL.init();
 
   console.log(
-    '%cUnfollowers-X v1.2 cargado',
-    'color:#606060;font-weight:bold;font-size:13px'
+    '%cUnfollowers-X v2.0 cargado',
+    'color:#484848;font-weight:bold;font-size:13px'
   );
 
 })();

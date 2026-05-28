@@ -3,56 +3,56 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="Detecta y gestiona cuentas no-mutuas en X (Twitter) desde la Consola de Desarrollador. Sin dependencias, sin servidor, 100% Vanilla JavaScript." />
-  <title>Unfollowers-X — Gestiona tus no-mutuos en X</title>
+  <meta name="description" content="Herramienta de automatizacion del navegador para gestionar no-mutuos y seguir usuarios en masa en X. Dashboard bidireccional con Modulo Unfollower y Modulo Auto-Follow." />
+  <title>Unfollowers-X v2.0 — Dashboard Bidireccional para X</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
 
-  <!-- ── NAVEGACION ─────────────────────────────────────── -->
+  <!-- ── NAVEGACION ─────────────────────────────────────────── -->
   <header class="nav-bar">
     <div class="container nav-inner">
-      <span class="nav-logo">Unfollowers-X</span>
-      <div class="nav-links">
-        <a href="#install"       class="nav-link">Instalacion</a>
-        <a href="#architecture"  class="nav-link">Arquitectura</a>
-        <a href="#disclaimer"    class="nav-link">Aviso legal</a>
+      <div class="nav-left">
+        <span class="nav-logo">Unfollowers-X</span>
+        <span class="nav-badge">v2.0</span>
+      </div>
+      <nav class="nav-links">
+        <a href="#modules"      class="nav-link">Modulos</a>
+        <a href="#install"      class="nav-link">Instalacion</a>
+        <a href="#architecture" class="nav-link">Arquitectura</a>
+        <a href="#disclaimer"   class="nav-link">Aviso legal</a>
         <a
           href="https://github.com/MaximoAmbro/Unfollowers-X"
           target="_blank"
           rel="noopener"
           class="nav-link nav-link-ghost"
         >GitHub</a>
-      </div>
+      </nav>
     </div>
   </header>
 
   <main>
 
-    <!-- ── HERO ───────────────────────────────────────────── -->
+    <!-- ── HERO ───────────────────────────────────────────────── -->
     <section class="hero">
       <div class="container hero-inner">
-        <div class="hero-badge">v1.2 — Vanilla JavaScript</div>
+        <div class="hero-badge">v2.0 — Dashboard Bidireccional</div>
         <h1 class="hero-title">
-          Descubre quien<br />no te sigue de vuelta
+          Unfollower y Auto-Follow<br />para X en un solo script
         </h1>
         <p class="hero-sub">
-          Herramienta de automatizacion del navegador para detectar y gestionar
-          cuentas no-mutuas en X. Sin dependencias externas. Sin servidor.
-          Sin acceso a tu cuenta. 100% en tu navegador.
+          Dashboard de dos modulos: detecta quienes no te siguen de vuelta
+          y dejales de seguir, o sigue en masa a los seguidores de cualquier
+          perfil. Sin dependencias. Sin servidor. 100% Vanilla JavaScript.
         </p>
         <div class="hero-ctas">
-          <a href="#install" class="btn btn-primary">Ver instrucciones</a>
-          <a
-            href="https://github.com/MaximoAmbro/Unfollowers-X/blob/main/unfollowers-x.js"
-            target="_blank"
-            rel="noopener"
-            class="btn btn-ghost"
-          >Ver codigo fuente</a>
+          <button class="btn btn-primary" id="btn-copy">Copiar codigo</button>
+          <a href="#install" class="btn btn-ghost">Ver instrucciones</a>
         </div>
+        <p class="hero-copy-note" id="copy-note"></p>
       </div>
 
-      <!-- Preview del overlay -->
+      <!-- Preview del dashboard -->
       <div class="container hero-preview">
         <div class="preview-frame">
           <div class="preview-bar">
@@ -61,8 +61,14 @@
             <span class="preview-dot"></span>
             <span class="preview-url">x.com/usuario/following</span>
           </div>
-          <div class="preview-overlay">
-            <span class="preview-brand">UNFOLLOWERS-X &nbsp; V1.2</span>
+          <div class="preview-nav">
+            <span class="preview-brand">UNFOLLOWERS-X V2.0</span>
+            <div class="preview-tabs">
+              <div class="preview-tab preview-tab-active">Modulo Unfollower</div>
+              <div class="preview-tab preview-tab-off">Modulo Auto-Follow</div>
+            </div>
+          </div>
+          <div class="preview-body">
             <div class="preview-spinner"></div>
             <p class="preview-heading">Escaneando lista de seguidos</p>
             <div class="preview-stats">
@@ -78,101 +84,87 @@
           </div>
         </div>
         <p class="preview-caption">
-          El overlay cubre la pantalla completa. X scrollea en background,
-          invisible para el usuario.
+          El overlay cubre la pantalla completa. X scrollea en background, invisible para el usuario.
         </p>
       </div>
     </section>
 
-    <!-- ── CARACTERISTICAS ────────────────────────────────── -->
-    <section class="features" id="features">
+    <!-- ── MODULOS ─────────────────────────────────────────────── -->
+    <section class="modules" id="modules">
       <div class="container">
-        <h2 class="section-title">Por que este enfoque</h2>
+        <h2 class="section-title">Dos modulos, una herramienta</h2>
         <p class="section-sub">
-          Diseñado con las mismas restricciones reales que enfrenta cualquier
-          herramienta de automatizacion en X.
+          Cada modulo se habilita automaticamente segun la pagina donde se ejecute el script.
         </p>
 
-        <div class="feature-grid">
-          <div class="feature-card">
-            <div class="feature-icon-wrap">
-              <div class="feature-icon">01</div>
-            </div>
-            <h3>Overlay full-screen</h3>
-            <p>
-              Una mascara cubre el 100% del viewport. El usuario ve solo
-              la interfaz del script. X scrollea en background sin
-              distracciones ni scroll visible.
-            </p>
+        <div class="modules-grid">
+
+          <!-- Modulo Unfollower -->
+          <div class="module-card">
+            <div class="module-num">01</div>
+            <h3>Modulo Unfollower</h3>
+            <p class="module-page">Ejecutar en: <code>x.com/TU_USUARIO/following</code></p>
+            <ul class="module-features">
+              <li>Escaneo invisible: scroll automatico detras del overlay</li>
+              <li>Detecta todos los no-mutuos sin limite de usuarios</li>
+              <li>Tabla con checkboxes para seleccion granular</li>
+              <li>Delays precisos: 10.23 — 64.32 segundos</li>
+              <li>Cooldown obligatorio cada 10 unfollows: 4-10 minutos</li>
+              <li>Sin limite de unfollows por sesion</li>
+            </ul>
           </div>
 
-          <div class="feature-card">
-            <div class="feature-icon-wrap">
-              <div class="feature-icon">02</div>
-            </div>
-            <h3>DOM Scraping robusto</h3>
-            <p>
-              Lee <code>[data-testid="UserCell"]</code> en lugar de hacer
-              llamadas directas a la API interna de X, que usa headers
-              dinámicos imposibles de replicar sin deteccion.
-            </p>
+          <!-- Modulo Auto-Follow -->
+          <div class="module-card">
+            <div class="module-num">02</div>
+            <h3>Modulo Auto-Follow</h3>
+            <p class="module-page">Ejecutar en: <code>x.com/@USUARIO/followers</code></p>
+            <ul class="module-features">
+              <li>Carga seguidores en chunks de 250 usuarios</li>
+              <li>Boton "Cargar mas" para chunks adicionales</li>
+              <li>Tabla con checkboxes para seleccion granular</li>
+              <li>Delays: 45 — 95 segundos entre follows</li>
+              <li>Cooldown obligatorio cada 10 follows: 4-10 minutos</li>
+              <li>Maximo 20 follows por lote (regla estricta)</li>
+              <li>Cooldown de 2 horas entre lotes</li>
+            </ul>
           </div>
 
-          <div class="feature-card">
-            <div class="feature-icon-wrap">
-              <div class="feature-icon">03</div>
-            </div>
-            <h3>Anti-baneo integrado</h3>
-            <p>
-              Delays aleatorios de 35 a 85 segundos entre cada accion.
-              Limite de 22 unfollows por sesion. Simulacion de hover
-              antes de cada clic para imitar comportamiento humano.
-            </p>
-          </div>
-
-          <div class="feature-card">
-            <div class="feature-icon-wrap">
-              <div class="feature-icon">04</div>
-            </div>
-            <h3>Control total</h3>
-            <p>
-              Tabla de resultados con checkboxes individuales.
-              Selecciona exactamente quienes dejar de seguir antes
-              de ejecutar. Boton de parada en cualquier momento.
-            </p>
-          </div>
         </div>
       </div>
     </section>
 
-    <!-- ── INSTALACION ─────────────────────────────────────── -->
+    <!-- ── INSTALACION ─────────────────────────────────────────── -->
     <section class="install-section" id="install">
       <div class="container">
         <h2 class="section-title">Instalacion</h2>
         <p class="section-sub">
-          El metodo recomendado es la Consola de DevTools.
-          Los bookmarklets son bloqueados por la politica CSP de X en navegadores modernos.
+          El metodo recomendado es la Consola de DevTools. Los bookmarklets son bloqueados
+          por la politica CSP de X en Chrome 98+, Firefox 100+.
         </p>
 
         <div class="install-tabs">
-          <button class="tab-btn tab-active" data-tab="devtools">
-            Consola de DevTools (recomendado)
-          </button>
-          <button class="tab-btn" data-tab="bookmarklet">
-            Bookmarklet (limitado por CSP)
-          </button>
+          <button class="tab-btn tab-active" data-tab="devtools">Consola de DevTools (recomendado)</button>
+          <button class="tab-btn" data-tab="bookmarklet">Bookmarklet (limitado por CSP)</button>
         </div>
 
-        <!-- Tab: DevTools -->
+        <!-- DevTools -->
         <div class="tab-content tab-content-active" id="tab-devtools">
           <div class="step-list">
+
             <div class="step">
               <div class="step-num">1</div>
               <div class="step-body">
-                <strong>Navega a tu pagina de seguidos</strong>
-                <p>Abre X e ingresa a la pagina de cuentas que sigues:</p>
-                <div class="code-block">
-                  <code>https://x.com/TU_USERNAME/following</code>
+                <strong>Decide que modulo usar y navega a la pagina correcta</strong>
+                <div class="module-nav-grid">
+                  <div class="module-nav-card">
+                    <span class="module-nav-label">Modulo Unfollower</span>
+                    <div class="code-block"><code>https://x.com/TU_USUARIO/following</code></div>
+                  </div>
+                  <div class="module-nav-card">
+                    <span class="module-nav-label">Modulo Auto-Follow</span>
+                    <div class="code-block"><code>https://x.com/@USUARIO/followers</code></div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -180,7 +172,7 @@
             <div class="step">
               <div class="step-num">2</div>
               <div class="step-body">
-                <strong>Abre la Consola de DevTools</strong>
+                <strong>Abre DevTools</strong>
                 <div class="shortcut-grid">
                   <div class="shortcut">
                     <span class="shortcut-os">Windows / Linux</span>
@@ -200,14 +192,10 @@
               <div class="step-body">
                 <strong>Copia y pega el script</strong>
                 <p>
-                  Abre
-                  <a
-                    href="https://github.com/MaximoAmbro/Unfollowers-X/blob/main/unfollowers-x.js"
-                    target="_blank"
-                    rel="noopener"
-                  >unfollowers-x.js</a>
-                  en GitHub. Selecciona todo el contenido, copialo
-                  y pegalo en la consola del navegador. Presiona <kbd>Enter</kbd>.
+                  Haz clic en <strong>Copiar codigo</strong> en la parte superior de esta pagina,
+                  o abre
+                  <a href="https://github.com/MaximoAmbro/Unfollowers-X/blob/main/unfollowers-x.js" target="_blank" rel="noopener">unfollowers-x.js en GitHub</a>,
+                  copia todo el contenido y pegalo en la consola. Presiona <kbd>Enter</kbd>.
                 </p>
               </div>
             </div>
@@ -215,62 +203,49 @@
             <div class="step">
               <div class="step-num">4</div>
               <div class="step-body">
-                <strong>Usa el overlay</strong>
+                <strong>El dashboard detecta la pagina automaticamente</strong>
                 <p>
-                  El overlay aparece automaticamente. Espera a que el escaneo
-                  termine, revisa la lista, marca las cuentas que deseas
-                  dejar de seguir y haz clic en <em>Dejar de seguir seleccionados</em>.
+                  El overlay aparece e identifica la URL actual. El modulo disponible
+                  se indica en las pestanas del dashboard. Si ests en la pagina equivocada,
+                  el dashboard muestra instrucciones de navegacion.
                 </p>
               </div>
             </div>
+
           </div>
         </div>
 
-        <!-- Tab: Bookmarklet -->
+        <!-- Bookmarklet -->
         <div class="tab-content" id="tab-bookmarklet">
           <div class="warning-box">
-            <strong>Limitacion de CSP:</strong> X aplica Content Security Policy
-            estricta que bloquea la ejecucion de <code>javascript:</code> bookmarklets
-            en Chrome 98+, Firefox 100+ y Safari 15.4+. Este metodo puede no funcionar.
+            <strong>Limitacion de CSP:</strong> X aplica Content Security Policy estricta
+            que bloquea <code>javascript:</code> bookmarklets en navegadores modernos.
+            Si el bookmarklet no funciona, usa el metodo de DevTools Console.
           </div>
-
           <div class="step-list">
             <div class="step">
               <div class="step-num">1</div>
               <div class="step-body">
-                <strong>Obtener el bookmarklet</strong>
+                <strong>Copiar el bookmarklet</strong>
                 <p>
-                  Abre
-                  <a
-                    href="https://github.com/MaximoAmbro/Unfollowers-X/blob/main/unfollowers-x.min.js"
-                    target="_blank"
-                    rel="noopener"
-                  >unfollowers-x.min.js</a>
-                  en GitHub. Copia la linea que empieza con <code>javascript:</code>.
+                  Haz clic en <strong>Copiar codigo</strong> en la parte superior, o abre
+                  <a href="https://github.com/MaximoAmbro/Unfollowers-X/blob/main/unfollowers-x.min.js" target="_blank" rel="noopener">unfollowers-x.min.js</a>
+                  y copia la linea que empieza con <code>javascript:</code>.
                 </p>
               </div>
             </div>
-
             <div class="step">
               <div class="step-num">2</div>
               <div class="step-body">
                 <strong>Crear el marcador</strong>
-                <p>
-                  En tu navegador, crea un nuevo marcador. En el campo URL,
-                  pega la linea copiada (comenzando con <code>javascript:</code>).
-                </p>
+                <p>Crea un nuevo marcador en tu navegador y pega el codigo en el campo URL.</p>
               </div>
             </div>
-
             <div class="step">
               <div class="step-num">3</div>
               <div class="step-body">
                 <strong>Ejecutar</strong>
-                <p>
-                  Navega a <code>https://x.com/TU_USERNAME/following</code>
-                  y haz clic en el marcador. Si la CSP lo bloquea,
-                  usa el metodo de DevTools Console.
-                </p>
+                <p>Navega a la pagina correcta y haz clic en el marcador.</p>
               </div>
             </div>
           </div>
@@ -279,117 +254,146 @@
       </div>
     </section>
 
-    <!-- ── ARQUITECTURA ────────────────────────────────────── -->
-    <section class="architecture" id="architecture">
+    <!-- ── ANTI-BOT ────────────────────────────────────────────── -->
+    <section class="antibот-section" id="architecture">
       <div class="container">
-        <h2 class="section-title">Arquitectura tecnica</h2>
+        <h2 class="section-title">Sistema anti-baneo sofisticado</h2>
         <p class="section-sub">
-          Por que DOM Scraping con Visual Masking en lugar de llamadas
-          directas a la API de X.
+          Cinco capas de proteccion para imitar comportamiento humano y
+          evitar deteccion por los algoritmos de X.
         </p>
 
-        <div class="arch-grid">
-          <div class="arch-col">
-            <h3 class="arch-heading">Por que no la API de X</h3>
-            <ul class="arch-list">
-              <li>
-                <strong>Headers dinamicos rotativos:</strong>
-                X autentica sus endpoints internos con tokens y headers
-                que cambian por peticion. Son imposibles de replicar
-                desde JavaScript del navegador sin ser detectado.
-              </li>
-              <li>
-                <strong>CSP bloquea fetch directo:</strong>
-                La politica Content Security Policy de X impide hacer
-                <code>fetch()</code> a sus APIs desde scripts inyectados,
-                incluyendo bookmarklets.
-              </li>
-              <li>
-                <strong>Rate limits agresivos:</strong>
-                La API oficial de X tiene limites muy estrictos y requiere
-                aprobacion de desarrollador. Cualquier automatizacion
-                sin credenciales oficiales es bloqueada.
-              </li>
-            </ul>
+        <div class="antibot-grid">
+          <div class="antibot-card">
+            <div class="antibot-num">01</div>
+            <h3>Delays precisos con decimales</h3>
+            <p>
+              Unfollower: <strong>10.23 — 64.32s</strong><br />
+              Auto-Follow: <strong>45 — 95s</strong><br />
+              Los decimales rompen la periodicidad estadistica detectada por algoritmos anti-bot.
+            </p>
           </div>
-
-          <div class="arch-col">
-            <h3 class="arch-heading">Por que DOM Scraping con overlay</h3>
-            <ul class="arch-list">
-              <li>
-                <strong>El DOM ya esta autenticado:</strong>
-                X renderiza la lista de seguidos en el DOM del navegador
-                del usuario autenticado. Leer ese DOM no requiere ningun
-                header ni token adicional.
-              </li>
-              <li>
-                <strong>Overlay como mascara UX:</strong>
-                Cubrir el viewport con un <code>position:fixed</code>
-                permite que <code>window.scrollBy()</code> opere en el
-                documento original sin que el usuario vea el scroll frenético.
-              </li>
-              <li>
-                <strong>Resistente a cambios de UI:</strong>
-                Buscar texto ("Follows you", "Te sigue") en lugar de
-                clases CSS hace el detector mas robusto frente a los
-                frecuentes redeploys del frontend de X.
-              </li>
-            </ul>
+          <div class="antibot-card">
+            <div class="antibot-num">02</div>
+            <h3>Cooldown obligatorio cada 10 acciones</h3>
+            <p>
+              Pausa aleatoria de <strong>4 a 10 minutos</strong> cada 10 unfollows o follows.
+              Simula el comportamiento de un usuario que descansa entre rafagas de actividad.
+            </p>
           </div>
-        </div>
-
-        <!-- Diagrama de modulos -->
-        <div class="arch-diagram">
-          <h3 class="arch-diagram-title">Modulos del script</h3>
-          <div class="module-flow">
-            <div class="module-box">
-              <div class="module-name">Detector</div>
-              <div class="module-desc">doesFollowBack()<br />extractInfo()</div>
-            </div>
-            <div class="module-arrow">→</div>
-            <div class="module-box">
-              <div class="module-name">Scraper</div>
-              <div class="module-desc">scroll automatico<br />colecta UserCells</div>
-            </div>
-            <div class="module-arrow">→</div>
-            <div class="module-box">
-              <div class="module-name">UI</div>
-              <div class="module-desc">overlay full-screen<br />4 fases</div>
-            </div>
-            <div class="module-arrow">→</div>
-            <div class="module-box">
-              <div class="module-name">Unfollower</div>
-              <div class="module-desc">delays aleatorios<br />confirma modal</div>
-            </div>
+          <div class="antibot-card">
+            <div class="antibot-num">03</div>
+            <h3>Limite de lote en Auto-Follow</h3>
+            <p>
+              Maximo <strong>20 follows por lote</strong> con cooldown de
+              <strong>2 horas</strong> entre lotes.
+              Mantiene la actividad dentro de umbrales humanos normales.
+            </p>
+          </div>
+          <div class="antibot-card">
+            <div class="antibot-num">04</div>
+            <h3>Simulacion de mouse</h3>
+            <p>
+              Hover con <code>MouseEvent('mouseover')</code> antes de cada clic,
+              con pausa aleatoria entre hover y clic. Los bots hacen clic directo; los humanos, no.
+            </p>
+          </div>
+          <div class="antibot-card">
+            <div class="antibot-num">05</div>
+            <h3>Scroll variable entre lecturas</h3>
+            <p>
+              El scroll durante el escaneo usa delays aleatorios de <strong>500ms a 2s</strong>
+              para evitar patrones de scroll mecanico regulares.
+            </p>
+          </div>
+          <div class="antibot-card">
+            <div class="antibot-num">06</div>
+            <h3>Timeout de sesion</h3>
+            <p>
+              La sesion se detiene automaticamente a las <strong>2 horas</strong>.
+              Sesiones excesivamente largas son una senal de alerta para los sistemas de monitoreo.
+            </p>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- ── AVISO LEGAL ─────────────────────────────────────── -->
+    <!-- ── POR QUE DOM SCRAPING ────────────────────────────────── -->
+    <section class="why-section">
+      <div class="container">
+        <h2 class="section-title">Por que DOM Scraping y no API GraphQL</h2>
+
+        <div class="why-grid">
+          <div class="why-col">
+            <h3 class="why-heading">Por que NO la API de X</h3>
+            <ul class="why-list">
+              <li>
+                <strong>Headers dinamicos rotativos:</strong>
+                X autentica cada peticion con tokens que cambian por request.
+                Imposibles de replicar desde JS del navegador sin deteccion.
+              </li>
+              <li>
+                <strong>CSP bloquea fetch() directo:</strong>
+                La politica Content-Security-Policy de X impide llamadas a
+                sus endpoints desde scripts inyectados.
+              </li>
+              <li>
+                <strong>API oficial con barreras:</strong>
+                Requiere aprobacion de cuenta de desarrollador y tiene rate
+                limits estrictos para acciones de follow/unfollow.
+              </li>
+            </ul>
+          </div>
+
+          <div class="why-col">
+            <h3 class="why-heading">Por que SI DOM Scraping</h3>
+            <ul class="why-list">
+              <li>
+                <strong>El DOM ya esta autenticado:</strong>
+                X renderiza las listas en el navegador del usuario logueado.
+                Leer ese DOM no requiere tokens adicionales.
+              </li>
+              <li>
+                <strong>Overlay como mascara UX:</strong>
+                <code>position:fixed; inset:0</code> cubre el viewport mientras
+                <code>window.scrollBy()</code> scrollea el documento original.
+              </li>
+              <li>
+                <strong>Busqueda por texto, no por clases:</strong>
+                Detectar "Follows you" / "Te sigue" en el <code>innerText</code>
+                es mas robusto que buscar clases CSS que X cambia con cada deploy.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ── AVISO LEGAL ─────────────────────────────────────────── -->
     <section class="disclaimer-section" id="disclaimer">
       <div class="container">
-        <h2 class="section-title">Aviso legal</h2>
+        <h2 class="section-title">Aviso legal y limitaciones</h2>
         <div class="disclaimer-box">
           <p>
-            Este proyecto es de <strong>caracter puramente educativo</strong>
-            y fue desarrollado como muestra de habilidades tecnicas en
-            JavaScript, automatizacion del DOM y tecnicas de web scraping
-            para un portfolio profesional.
+            Este proyecto es de <strong>caracter puramente educativo</strong> y fue desarrollado
+            como muestra de habilidades tecnicas en JavaScript para un portfolio profesional.
           </p>
           <p>
             El uso de este script puede violar los
-            <a href="https://twitter.com/en/tos" target="_blank" rel="noopener">
-              Terminos de Servicio de X (Twitter)
-            </a>,
-            en particular las clausulas sobre automatizacion y uso de
-            herramientas de terceros no autorizadas. Puede resultar en
-            restricciones temporales o permanentes de tu cuenta.
+            <a href="https://twitter.com/en/tos" target="_blank" rel="noopener">Terminos de Servicio de X</a>.
+            Puede resultar en restricciones temporales o permanentes de tu cuenta.
+            El autor no se hace responsable de ninguna consecuencia derivada de su uso.
           </p>
           <p>
-            El autor no se hace responsable de ninguna consecuencia derivada
-            del uso de esta herramienta. No se alienta el uso masivo ni malicioso
-            de automatizaciones en plataformas de terceros.
+            <strong>Limitaciones tecnicas:</strong> X actualiza su frontend frecuentemente.
+            Si cambian los <code>data-testid</code> del DOM, el script puede dejar de funcionar
+            hasta ser actualizado. El cooldown de 2 horas entre lotes de Auto-Follow no persiste
+            si se recarga la pagina (no se usa localStorage por diseno).
+          </p>
+          <p>
+            Usar con moderacion. Esperar al menos 2-3 horas entre sesiones de unfollows
+            y 2 horas entre lotes de follows. No recomendado para cuentas importantes.
           </p>
         </div>
       </div>
@@ -401,52 +405,69 @@
   <footer class="footer">
     <div class="container footer-inner">
       <span class="footer-logo">Unfollowers-X</span>
-      <span class="footer-version">v1.2</span>
+      <span class="footer-version">v2.0</span>
       <div class="footer-links">
-        <a
-          href="https://github.com/MaximoAmbro/Unfollowers-X"
-          target="_blank"
-          rel="noopener"
-        >GitHub</a>
-        <a
-          href="https://github.com/MaximoAmbro/Unfollowers-X/blob/main/unfollowers-x.js"
-          target="_blank"
-          rel="noopener"
-        >Script</a>
+        <a href="https://github.com/MaximoAmbro/Unfollowers-X" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/MaximoAmbro/Unfollowers-X/blob/main/unfollowers-x.js" target="_blank" rel="noopener">Script</a>
         <a href="#disclaimer">Aviso legal</a>
       </div>
-      <p class="footer-copy">
-        Desarrollado como proyecto de portfolio — Vanilla JS — DOM Automation
-      </p>
+      <p class="footer-copy">Desarrollado como proyecto de portfolio — Vanilla JS — DOM Automation</p>
     </div>
   </footer>
 
   <script>
-    // Tabs de instalacion
-    const tabBtns    = document.querySelectorAll('.tab-btn');
-    const tabPanels  = document.querySelectorAll('.tab-content');
-
-    tabBtns.forEach(btn => {
+    // ── Tabs de instalacion ──────────────────────────────────
+    document.querySelectorAll('.tab-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        const target = btn.dataset.tab;
-
-        tabBtns.forEach(b   => b.classList.remove('tab-active'));
-        tabPanels.forEach(p => p.classList.remove('tab-content-active'));
-
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('tab-active'));
+        document.querySelectorAll('.tab-content').forEach(p => p.classList.remove('tab-content-active'));
         btn.classList.add('tab-active');
-        document.getElementById('tab-' + target)?.classList.add('tab-content-active');
+        document.getElementById('tab-' + btn.dataset.tab)?.classList.add('tab-content-active');
       });
     });
 
-    // Navegacion smooth para los anclas internas
+    // ── Scroll suave en anclas internas ──────────────────────
     document.querySelectorAll('a[href^="#"]').forEach(a => {
       a.addEventListener('click', e => {
-        const target = document.querySelector(a.getAttribute('href'));
-        if (target) {
-          e.preventDefault();
-          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
+        const t = document.querySelector(a.getAttribute('href'));
+        if (t) { e.preventDefault(); t.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
       });
+    });
+
+    // ── Boton Copiar codigo ──────────────────────────────────
+    // Carga unfollowers-x.min.js desde el mismo origen y copia
+    // la linea que empieza con "javascript:" al portapapeles.
+    const copyBtn  = document.getElementById('btn-copy');
+    const copyNote = document.getElementById('copy-note');
+
+    function showCopyState(success, msg) {
+      copyNote.textContent = msg;
+      copyNote.className   = 'hero-copy-note ' + (success ? 'copy-ok' : 'copy-err');
+      if (success) {
+        copyBtn.textContent = 'Copiado';
+        copyBtn.disabled    = true;
+        setTimeout(() => {
+          copyBtn.textContent = 'Copiar codigo';
+          copyBtn.disabled    = false;
+          copyNote.textContent = '';
+        }, 3000);
+      }
+    }
+
+    copyBtn.addEventListener('click', async () => {
+      try {
+        const res  = await fetch('./unfollowers-x.min.js');
+        if (!res.ok) throw new Error('fetch failed');
+        const text = await res.text();
+        const line = text.split('\n').find(l => l.trimStart().startsWith('javascript:'));
+        if (!line) throw new Error('bookmarklet line not found');
+        await navigator.clipboard.writeText(line.trim());
+        showCopyState(true, 'Codigo copiado. Pegar en la Consola de DevTools (F12).');
+      } catch (err) {
+        showCopyState(false,
+          'No se pudo copiar automaticamente. Abre unfollowers-x.min.js en GitHub y copia la linea javascript:...'
+        );
+      }
     });
   </script>
 
