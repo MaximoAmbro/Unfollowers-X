@@ -533,31 +533,35 @@
       /* ── Barra de navegacion superior ────────────────────── */
       .xuf-nav {
         display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 0 24px;
-        height: 52px;
+        flex-direction: column;
         border-bottom: 1px solid #1e1e1e;
         background: #0d0d0d;
         flex-shrink: 0;
+        align-items: stretch;
+      }
+      .xuf-nav-top {
+        display: flex;
+        align-items: center;
+        padding: 12px 24px 8px;
         gap: 16px;
       }
       .xuf-brand {
-        font-size: 11px;
+        flex: 1;
+        text-align: center;
+        font-size: 15px;
         font-weight: 700;
-        letter-spacing: 2px;
-        text-transform: uppercase;
-        color: #2a2a2a;
+        letter-spacing: 0.5px;
+        color: #c8c8c8;
         white-space: nowrap;
       }
-      .xuf-ver { color: #222; }
+      .xuf-ver { color: #585858; }
 
       /* ── Tabs ────────────────────────────────────────────── */
       .xuf-tabs {
         display: flex;
         gap: 4px;
-        flex: 1;
         justify-content: center;
+        padding: 0 24px 10px;
       }
       .xuf-tab {
         background: transparent;
@@ -1053,7 +1057,10 @@
       const afDisabled  = pageType !== 'followers';
       this._el.innerHTML = `
         <div class="xuf-nav">
-          <span class="xuf-brand">Unfollowers-X <span class="xuf-ver">v2.1</span></span>
+          <div class="xuf-nav-top">
+            <span class="xuf-brand">Unfollowers-X <span class="xuf-ver">V2.1</span></span>
+            <button class="xuf-close" id="xuf-close-btn">Cerrar</button>
+          </div>
           <div class="xuf-tabs">
             <button
               class="xuf-tab ${ufDisabled ? 'xuf-tab-disabled' : 'xuf-tab-active'}"
@@ -1066,7 +1073,6 @@
               ${afDisabled ? 'disabled' : ''}
             >Modulo Auto-Follow</button>
           </div>
-          <button class="xuf-close" id="xuf-close-btn">Cerrar</button>
         </div>
         <div class="xuf-body xuf-body-center" id="xuf-body"></div>
       `;
