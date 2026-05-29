@@ -1,6 +1,6 @@
 /**
  * =================================================================
- *  Unfollowers-X  v2.0
+ *  Unfollowers-X  v2.1
  *  Dashboard Bidireccional: Unfollower + Auto-Follow
  *  Vanilla JavaScript — Sin dependencias externas
  * =================================================================
@@ -32,15 +32,12 @@
     UF_CD_MIN:     4  * 60 * 1_000, // 4 minutos
     UF_CD_MAX:     10 * 60 * 1_000, // 10 minutos
 
-    // Auto-Follow — delays entre acciones
-    AF_DELAY_MIN:      45_000,
-    AF_DELAY_MAX:      95_000,
-    AF_CD_EVERY:       10,
-    AF_CD_MIN:         4  * 60 * 1_000,
-    AF_CD_MAX:         10 * 60 * 1_000,
-    AF_MAX_PER_BATCH:  20,
-    AF_BATCH_WAIT:     2 * 60 * 60 * 1_000, // 2 horas entre lotes
-    AF_CHUNK_SIZE:     250,
+    // Auto-Follow — delays entre acciones (sin limite de lote desde V2.1)
+    AF_DELAY_MIN: 45_000,
+    AF_DELAY_MAX: 95_000,
+    AF_CD_EVERY:  10,
+    AF_CD_MIN:    4  * 60 * 1_000,
+    AF_CD_MAX:    10 * 60 * 1_000,
 
     // Scroll
     SC_MIN:       500,
@@ -71,13 +68,13 @@
     af: {
       candidates:  [],
       selected:    new Set(),
-      seen:        new Set(),  // usernames vistos en todos los chunks
+      seen:        new Set(),   // usernames vistos (evita duplicados)
       count:       0,
-      phase:       'idle',     // idle|loading|results|running|done
-      scanDone:    false,      // true si se llego al final de la lista
+      phase:       'idle',      // idle|config|loading|warning|results|running|done
+      scanDone:    false,       // true si se llego al final de la lista
       stuckCount:  0,
       lastHeight:  0,
-      lastBatchEnd: null,      // timestamp del ultimo lote completado
+      targetCount: 250,         // cantidad elegida en pantalla de configuracion
     },
   };
 
@@ -246,36 +243,49 @@
     },
 
     /**
-     * Carga un chunk de seguidores desde la pagina actual de /followers.
-     * Continua desde la posicion de scroll actual (no reinicia).
-     * Usado por el modulo Auto-Follow con carga incremental por chunks.
+     * Carga EXACTAMENTE targetCount seguidores desde /followers.
+     * Continua desde la posicion de scroll actual (no reinicia al top).
+     *
+     * Para garantizar la cantidad exacta:
+     * - Se detiene al llegar al target, incluso a mitad de un pass del DOM
+     * - Si el scrollHeight no cambia N veces → lista agotada (scanDone = true)
+     *
+     * @param {number} targetCount - Cantidad exacta a cargar
+     * @param {function(number, number): void} onProgress - (cargados, target)
+     * @returns {Promise<number>} Cantidad real de usuarios cargados
      */
-    async scanFollowers(onProgress) {
-      let added = 0;
+    async scanFollowers(targetCount, onProgress) {
       S.af.stuckCount = 0;
+      let loaded = S.af.candidates.length; // continua desde donde quedo
 
-      while (S.af.stuckCount < CFG.SC_MAX_STUCK && !S.stop) {
+      while (loaded < targetCount && S.af.stuckCount < CFG.SC_MAX_STUCK && !S.stop) {
         if (expired()) break;
+
         document.querySelectorAll('[data-testid="UserCell"]').forEach(cell => {
+          if (loaded >= targetCount) return; // limite exacto
           const { username, displayName } = DETECT.userInfo(cell);
           if (!username || S.af.seen.has(username)) return;
-          // Solo incluir usuarios que podemos seguir (boton Follow presente)
-          if (!DETECT.followBtn(cell)) return;
+          if (!DETECT.followBtn(cell)) return; // ya seguido o no followable
           S.af.seen.add(username);
           S.af.candidates.push({ username, displayName });
-          added++;
+          loaded++;
         });
-        onProgress(S.af.candidates.length);
-        if (added >= CFG.AF_CHUNK_SIZE) break; // chunk completo
+
+        onProgress(loaded, targetCount);
+
+        if (loaded >= targetCount) break;
+
         window.scrollBy(0, CFG.SC_STEP);
         await sleep(rndInt(CFG.SC_MIN, CFG.SC_MAX));
+
         const nh = document.body.scrollHeight;
         S.af.stuckCount = nh === S.af.lastHeight ? S.af.stuckCount + 1 : 0;
-        S.af.lastHeight = nh;
+        S.af.lastHeight  = nh;
       }
 
-      S.af.scanDone = S.af.stuckCount >= CFG.SC_MAX_STUCK;
-      return added;
+      // scanDone = true cuando la lista se agoto antes de alcanzar el target
+      S.af.scanDone = loaded < targetCount && S.af.stuckCount >= CFG.SC_MAX_STUCK;
+      return loaded;
     },
   };
 
@@ -385,8 +395,8 @@
 
   // =================================================================
   // MODULO: AF (Auto-Follow)
-  // Responsabilidad: seguir usuarios con delays, cooldowns y el
-  // limite estricto de 20 follows por lote.
+  // Responsabilidad: seguir usuarios con delays y cooldowns.
+  // V2.1: sin limite de follows por sesion, el usuario controla.
   // =================================================================
   const AF = {
     async waitConfirm(t = 4_000) {
@@ -410,22 +420,12 @@
     },
 
     /**
-     * Verifica si el cooldown de 2 horas entre lotes esta activo.
-     * Solo aplica dentro de la misma sesion (sin persistencia en localStorage).
-     */
-    batchCooldownActive() {
-      if (!S.af.lastBatchEnd) return false;
-      return (Date.now() - S.af.lastBatchEnd) < CFG.AF_BATCH_WAIT;
-    },
-
-    batchCooldownRemaining() {
-      if (!S.af.lastBatchEnd) return 0;
-      return Math.max(0, CFG.AF_BATCH_WAIT - (Date.now() - S.af.lastBatchEnd));
-    },
-
-    /**
      * Ejecuta la cola de follows con scroll progresivo.
-     * Se detiene al alcanzar CFG.AF_MAX_PER_BATCH follows.
+     * Sin limite de cantidad: sigue todos los usuarios seleccionados.
+     *
+     * Anti-baneo:
+     * - Delay 45-95s entre cada follow
+     * - Cooldown 4-10 min cada CFG.AF_CD_EVERY follows
      */
     async run(queue, onProgress, onCooldown) {
       S.af.count = 0;
@@ -435,13 +435,12 @@
       const pending = new Set(queue.map(u => u.username));
       let done = 0, lastH = 0, stuck = 0;
 
-      while (pending.size > 0 && !S.stop && stuck < 7 && done < CFG.AF_MAX_PER_BATCH) {
+      while (pending.size > 0 && !S.stop && stuck < 7) {
         if (expired()) break;
         const cells = document.querySelectorAll('[data-testid="UserCell"]');
         let found = false;
 
         for (const cell of cells) {
-          if (done >= CFG.AF_MAX_PER_BATCH) break;
           const { username } = DETECT.userInfo(cell);
           if (!username || !pending.has(username)) continue;
 
@@ -470,13 +469,13 @@
             console.error('[XUF] error follow @' + username, e);
           }
 
-          if (done >= CFG.AF_MAX_PER_BATCH) break;
+          if (pending.size === 0 || S.stop) break;
 
           // Cooldown obligatorio cada N follows
-          if (done > 0 && done % CFG.AF_CD_EVERY === 0 && pending.size > 0 && !S.stop) {
+          if (done % CFG.AF_CD_EVERY === 0) {
             const cdMs = rndInt(CFG.AF_CD_MIN, CFG.AF_CD_MAX);
             await this.countdown(cdMs, rem => onCooldown(rem, done, queue.length));
-          } else if (pending.size > 0 && !S.stop) {
+          } else {
             await this.countdown(delayMs, rem => onProgress(done, queue.length, username, rem));
           }
         }
@@ -492,7 +491,6 @@
         }
       }
 
-      S.af.lastBatchEnd = Date.now();
       return { done, stopped: S.stop };
     },
   };
@@ -949,6 +947,77 @@
         accent-color: #b8b8b8;
       }
       .xuf-cb:disabled { opacity: 0.3; cursor: not-allowed; }
+
+      /* ── Pantalla de configuracion AF (V2.1) ─────────────── */
+      .xuf-config-wrap {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+        width: 100%;
+        max-width: 340px;
+      }
+      .xuf-num-input {
+        width: 100%;
+        background: #0d0d0d;
+        border: 1px solid #252525;
+        border-radius: 4px;
+        padding: 10px 14px;
+        font-size: 26px;
+        font-weight: 700;
+        color: #d8d8d8;
+        text-align: center;
+        font-family: inherit;
+        outline: none;
+        transition: border-color 0.15s;
+        -moz-appearance: textfield;
+      }
+      .xuf-num-input::-webkit-outer-spin-button,
+      .xuf-num-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+      .xuf-num-input:focus { border-color: #3a3a3a; }
+      .xuf-slider {
+        width: 100%;
+        -webkit-appearance: none;
+        appearance: none;
+        height: 2px;
+        background: #252525;
+        border-radius: 1px;
+        outline: none;
+        cursor: pointer;
+      }
+      .xuf-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #c0c0c0;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .xuf-slider::-webkit-slider-thumb:hover { background: #f0f0f0; }
+      .xuf-slider::-moz-range-thumb {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #c0c0c0;
+        cursor: pointer;
+        border: none;
+      }
+      .xuf-range-labels {
+        display: flex;
+        justify-content: space-between;
+        width: 100%;
+        font-size: 10px;
+        color: #282828;
+      }
+      .xuf-estimate {
+        font-size: 13px;
+        font-weight: 600;
+        color: #505050;
+        margin: 0;
+        text-align: center;
+        min-height: 20px;
+      }
     `,
 
     // -----------------------------------------------------------------
@@ -984,7 +1053,7 @@
       const afDisabled  = pageType !== 'followers';
       this._el.innerHTML = `
         <div class="xuf-nav">
-          <span class="xuf-brand">Unfollowers-X <span class="xuf-ver">v2.0</span></span>
+          <span class="xuf-brand">Unfollowers-X <span class="xuf-ver">v2.1</span></span>
           <div class="xuf-tabs">
             <button
               class="xuf-tab ${ufDisabled ? 'xuf-tab-disabled' : 'xuf-tab-active'}"
@@ -1062,19 +1131,14 @@
           <button class="xuf-btn xuf-btn-primary" id="xuf-start-uf">Iniciar Modulo Unfollower</button>
         `;
       } else if (pageType === 'followers') {
-        const cooldownActive = AF.batchCooldownActive();
-        const cooldownNote   = cooldownActive
-          ? `<div class="xuf-module-warn" style="max-width:400px">Cooldown activo. Proximo lote disponible en <strong>${fmtMs(AF.batchCooldownRemaining())}</strong></div>`
-          : '';
         content = `
           <div class="xuf-page-ind xuf-anim">
             <span class="xuf-page-ind-url">${esc(window.location.pathname)}</span>
             <span class="xuf-page-ind-status ok">Pagina /followers detectada</span>
           </div>
           <p class="xuf-heading">Modulo Auto-Follow disponible</p>
-          <p class="xuf-sub">Cargara los seguidores de este perfil en bloques de ${CFG.AF_CHUNK_SIZE} y te permitira seguir hasta ${CFG.AF_MAX_PER_BATCH} por lote.</p>
-          ${cooldownNote}
-          <button class="xuf-btn xuf-btn-primary" id="xuf-start-af" ${cooldownActive ? 'disabled' : ''}>
+          <p class="xuf-sub">Elige cuantos seguidores cargar (1-5000) y siguelos automaticamente con delays anti-baneo.</p>
+          <button class="xuf-btn xuf-btn-primary" id="xuf-start-af">
             Iniciar Modulo Auto-Follow
           </button>
         `;
@@ -1297,10 +1361,95 @@
     },
 
     // -----------------------------------------------------------------
-    // Auto-Follow — fases de UI
+    // Auto-Follow — fases de UI  (V2.1)
     // -----------------------------------------------------------------
     af: {
-      showLoading(count) {
+
+      /**
+       * FASE 0 — Seleccion previa de cantidad.
+       * Input numerico + slider sincronizados + estimado dinamico.
+       */
+      showConfig() {
+        UI._setBodyMode('center');
+        const b = UI._body();
+        if (!b) return;
+        const DEFAULT = S.af.targetCount || 250;
+        b.innerHTML = `
+          <div class="xuf-card xuf-anim" style="max-width:480px">
+            <p class="xuf-heading">Configuracion</p>
+            <p class="xuf-sub">Cuantos seguidores deseas cargar y seguir:</p>
+            <div class="xuf-config-wrap">
+              <input
+                type="number"
+                id="xuf-af-cnt"
+                class="xuf-num-input"
+                value="${DEFAULT}"
+                min="1"
+                max="5000"
+              />
+              <input
+                type="range"
+                id="xuf-af-slider"
+                class="xuf-slider"
+                value="${DEFAULT}"
+                min="1"
+                max="5000"
+                step="1"
+              />
+              <div class="xuf-range-labels">
+                <span>1</span>
+                <span>5000</span>
+              </div>
+              <p class="xuf-estimate" id="xuf-af-est"></p>
+            </div>
+            <div style="display:flex;gap:8px">
+              <button class="xuf-btn xuf-btn-ghost"   id="xuf-af-cfg-back">Volver</button>
+              <button class="xuf-btn xuf-btn-primary" id="xuf-af-cfg-load">Cargar seguidores</button>
+            </div>
+          </div>
+        `;
+
+        const input  = document.getElementById('xuf-af-cnt');
+        const slider = document.getElementById('xuf-af-slider');
+        const est    = document.getElementById('xuf-af-est');
+
+        function calcEstimate(n) {
+          // Delay promedio: (45+95)/2 = 70s entre follows
+          // Cooldown promedio: (4+10)/2 = 7 min cada 10 follows
+          const total = n * 70 + Math.floor(n / 10) * 7 * 60;
+          const h = Math.floor(total / 3600);
+          const m = Math.floor((total % 3600) / 60);
+          return `${n} usuarios = ${h}h ${m}m`;
+        }
+
+        function syncFrom(val) {
+          const n = Math.max(1, Math.min(5000, parseInt(val) || 1));
+          input.value  = n;
+          slider.value = n;
+          est.textContent = calcEstimate(n);
+          return n;
+        }
+
+        syncFrom(DEFAULT);
+
+        input.addEventListener('input', () => syncFrom(input.value));
+        slider.addEventListener('input', () => syncFrom(slider.value));
+
+        // Bloquear caracteres no numericos en el input
+        input.addEventListener('keydown', e => {
+          const allowed = ['Backspace','Delete','ArrowLeft','ArrowRight','Tab'];
+          if (!allowed.includes(e.key) && !/^\d$/.test(e.key)) e.preventDefault();
+        });
+
+        document.getElementById('xuf-af-cfg-back').onclick = () => CTRL.backToDashboard();
+        document.getElementById('xuf-af-cfg-load').onclick = () => {
+          const count = Math.max(1, Math.min(5000, parseInt(input.value) || 250));
+          CTRL.loadFollowers(count);
+        };
+      },
+
+      /** FASE 1 — Progreso de carga */
+      showLoading(count, target) {
         UI._setBodyMode('center');
         const b = UI._body();
         if (!b) return;
@@ -1309,11 +1458,11 @@
             <div class="xuf-spinner"></div>
             <p class="xuf-heading">Cargando seguidores</p>
             <p class="xuf-sub" id="xuf-af-sub">Iniciando...</p>
-            <div class="xuf-stats">
-              <div class="xuf-stat">
-                <span class="xuf-stat-n" id="xuf-af-n">${count}</span>
-                <span class="xuf-stat-l">Cargados</span>
+            <div class="xuf-prog-wrap">
+              <div class="xuf-prog-track">
+                <div class="xuf-prog-fill" id="xuf-af-load-bar" style="width:0%"></div>
               </div>
+              <span class="xuf-prog-lbl" id="xuf-af-load-lbl">${count} / ${target}</span>
             </div>
             <button class="xuf-btn xuf-btn-ghost" id="xuf-af-cancel">Cancelar</button>
           </div>
@@ -1321,19 +1470,49 @@
         document.getElementById('xuf-af-cancel').onclick = () => { S.stop = true; };
       },
 
-      updateLoading(count) {
-        const sub = document.getElementById('xuf-af-sub');
-        const n   = document.getElementById('xuf-af-n');
-        if (sub) sub.textContent = 'Cargando usuarios ' + count + '...';
-        if (n)   n.textContent   = count;
+      updateLoading(count, target) {
+        const sub  = document.getElementById('xuf-af-sub');
+        const bar  = document.getElementById('xuf-af-load-bar');
+        const lbl  = document.getElementById('xuf-af-load-lbl');
+        const pct  = target > 0 ? Math.min(100, Math.round((count / target) * 100)) : 0;
+        if (sub) sub.textContent  = 'Cargando usuario ' + count + ' de ' + target + '...';
+        if (bar) bar.style.width  = pct + '%';
+        if (lbl) lbl.textContent  = count + ' / ' + target;
       },
 
+      /**
+       * FASE 1b — Advertencia si hay menos usuarios que el target.
+       * Devuelve una Promise que resuelve true (continuar) o false (volver).
+       */
+      showCountWarning(found, requested) {
+        UI._setBodyMode('center');
+        const b = UI._body();
+        if (!b) return Promise.resolve(false);
+        return new Promise(resolve => {
+          b.innerHTML = `
+            <div class="xuf-card xuf-anim">
+              <p class="xuf-heading">Seguidores disponibles</p>
+              <p class="xuf-sub">
+                Solo hay <strong style="color:#b8b8b8">${found}</strong> seguidores
+                disponibles para seguir en este perfil (solicitaste ${requested}).
+              </p>
+              <p class="xuf-sub">Continuar con los ${found} disponibles?</p>
+              <div style="display:flex;gap:8px">
+                <button class="xuf-btn xuf-btn-ghost"   id="xuf-warn-back">Volver a configuracion</button>
+                <button class="xuf-btn xuf-btn-primary" id="xuf-warn-ok">Continuar con ${found}</button>
+              </div>
+            </div>
+          `;
+          document.getElementById('xuf-warn-ok').onclick   = () => resolve(true);
+          document.getElementById('xuf-warn-back').onclick = () => resolve(false);
+        });
+      },
+
+      /** FASE 2 — Tabla interactiva con todos los usuarios cargados */
       showResults(candidates) {
         UI._setBodyMode('panel');
         const b = UI._body();
         if (!b) return;
-
-        const isAFLimit = candidates.length > CFG.AF_MAX_PER_BATCH;
 
         const rows = candidates.map(({ username, displayName }) => {
           const ini   = (displayName[0] || username[0] || '?').toUpperCase();
@@ -1355,27 +1534,17 @@
           `;
         }).join('');
 
-        const limitBar = isAFLimit ? `
-          <div class="xuf-limit-bar">
-            <strong>Atencion:</strong> Solo se procesaran los primeros <strong>${CFG.AF_MAX_PER_BATCH}</strong> seleccionados por lote.
-          </div>` : '';
-
-        const loadMoreBtn = !S.af.scanDone ? `
-          <button class="xuf-btn xuf-btn-ghost" id="xuf-af-more">
-            Cargar mas seguidores (+${CFG.AF_CHUNK_SIZE})
-          </button>` : `<span class="xuf-ft-note">Lista completa cargada</span>`;
-
         b.innerHTML = `
           <div class="xuf-panel xuf-anim">
             <div class="xuf-panel-hd">
-              <span class="xuf-sub">Seguidores disponibles para seguir</span>
+              <span class="xuf-sub">Seguidores listos para seguir</span>
               <div class="xuf-panel-hd-r">
                 <span class="xuf-sel-lbl">
-                  <strong id="xuf-af-sel-n">${candidates.length}</strong> de ${candidates.length} seleccionados
+                  <strong id="xuf-af-sel-n">${candidates.length}</strong>
+                  usuarios seleccionados de ${candidates.length} cargados
                 </span>
               </div>
             </div>
-            ${limitBar}
             <div class="xuf-toolbar">
               <button class="xuf-btn xuf-btn-ghost" id="xuf-af-sel-all">Seleccionar todo</button>
               <button class="xuf-btn xuf-btn-ghost" id="xuf-af-desel">Deseleccionar todo</button>
@@ -1384,23 +1553,23 @@
               <table class="xuf-table"><tbody>${rows}</tbody></table>
             </div>
             <div class="xuf-panel-ft">
-              ${loadMoreBtn}
+              <p class="xuf-ft-note">Delays 45-95s — Cooldown cada ${CFG.AF_CD_EVERY} follows: 4-10 min</p>
               <button class="xuf-btn xuf-btn-primary" id="xuf-af-run">
-                Seguir seleccionados
+                Ejecutar Follows
               </button>
             </div>
           </div>
         `;
 
-        // Sync con state
+        // Pre-seleccionar todos
         S.af.selected.clear();
         candidates.forEach(u => S.af.selected.add(u.username));
 
         const refreshCnt = () => {
-          const el = document.getElementById('xuf-af-sel-n');
-          if (el) el.textContent = S.af.selected.size;
+          const el  = document.getElementById('xuf-af-sel-n');
           const btn = document.getElementById('xuf-af-run');
-          if (btn) btn.disabled = S.af.selected.size === 0;
+          if (el)  el.textContent   = S.af.selected.size;
+          if (btn) btn.disabled     = S.af.selected.size === 0;
         };
 
         b.querySelectorAll('.xuf-cb').forEach(cb => {
@@ -1418,12 +1587,12 @@
           b.querySelectorAll('.xuf-cb').forEach(cb => { cb.checked = false; S.af.selected.delete(cb.dataset.u); });
           refreshCnt();
         };
-        document.getElementById('xuf-af-more')?.addEventListener('click', () => CTRL.loadMoreFollowers());
         document.getElementById('xuf-af-run').onclick = () => {
           if (S.af.selected.size > 0) CTRL.runAutoFollow();
         };
       },
 
+      /** FASE 3 — Progreso de ejecucion */
       showRunning(total) {
         UI._setBodyMode('center');
         const b = UI._body();
@@ -1439,16 +1608,20 @@
               <span class="xuf-prog-lbl" id="xuf-af-lbl">0 / ${total}</span>
             </div>
             <div class="xuf-cd-banner" id="xuf-af-cd" style="display:none"></div>
-            <button class="xuf-btn xuf-btn-ghost" id="xuf-af-stop">Detener</button>
+            <button class="xuf-btn xuf-btn-ghost" id="xuf-af-stop">Cancelar</button>
           </div>
         `;
         document.getElementById('xuf-af-stop').onclick = () => {
           S.stop = true;
           const s = document.getElementById('xuf-af-stop');
-          if (s) { s.textContent = 'Deteniendo...'; s.disabled = true; }
+          if (s) { s.textContent = 'Cancelando...'; s.disabled = true; }
         };
       },
 
+      /**
+       * Actualiza progreso durante ejecucion.
+       * Muestra segundos enteros en cuenta regresiva para mayor claridad.
+       */
       updateProgress(cur, total, username, remMs) {
         const pct = Math.round((cur / total) * 100);
         const h   = document.getElementById('xuf-af-h');
@@ -1456,10 +1629,10 @@
         const p   = document.getElementById('xuf-af-prog');
         const l   = document.getElementById('xuf-af-lbl');
         const cd  = document.getElementById('xuf-af-cd');
-        if (h)  h.textContent = 'Siguiendo a...';
+        if (h)  h.textContent = 'Siguiendo usuario ' + cur + ' de ' + total + '...';
         if (u)  u.textContent = '@' + username;
         if (p)  p.style.width = pct + '%';
-        if (l)  l.textContent = cur + ' / ' + total + '  —  Espera ' + fmtSec(remMs);
+        if (l)  l.textContent = 'Espera ' + Math.ceil(remMs / 1_000) + 's';
         if (cd) cd.style.display = 'none';
       },
 
@@ -1475,17 +1648,18 @@
         }
       },
 
+      /** FASE 4 — Resumen final simplificado */
       showDone(count, stopped) {
         UI._setBodyMode('center');
         const b = UI._body();
         if (!b) return;
         const msg = stopped
-          ? 'Proceso detenido manualmente.'
-          : `Seguidos ${count} usuario${count !== 1 ? 's' : ''}. Espera 2 horas antes de la proxima sesion.`;
+          ? `Cancelado. ${count} usuario${count !== 1 ? 's' : ''} seguidos antes de parar.`
+          : `Seguida a ${count} usuario${count !== 1 ? 's' : ''} con exito.`;
         b.innerHTML = `
           <div class="xuf-card xuf-anim">
             ${count > 0 ? `<p class="xuf-big-num">${count}</p>` : ''}
-            <p class="xuf-heading">${stopped ? 'Proceso detenido' : 'Lote completado'}</p>
+            <p class="xuf-heading">${stopped ? 'Proceso cancelado' : 'Completado'}</p>
             <p class="xuf-sub">${esc(msg)}</p>
             <button class="xuf-btn xuf-btn-primary" id="xuf-af-dash">Volver al Dashboard</button>
           </div>
@@ -1579,22 +1753,19 @@
     },
 
     // -----------------------------------------------------------------
-    // Auto-Follow — flujo completo
+    // Auto-Follow — flujo completo (V2.1)
     // -----------------------------------------------------------------
-    startAutoFollow() {
-      if (AF.batchCooldownActive()) {
-        this.init(); // re-render dashboard con el aviso de cooldown
-        return;
-      }
 
+    /** Muestra la pantalla de configuracion (paso 0) */
+    startAutoFollow() {
       S.activeModule  = 'autofollow';
-      S.running       = true;
+      S.running       = false; // config no es "corriendo"
       S.stop          = false;
       S.af.candidates = [];
       S.af.selected.clear();
       S.af.seen.clear();
       S.af.count      = 0;
-      S.af.phase      = 'loading';
+      S.af.phase      = 'config';
       S.af.scanDone   = false;
       S.af.stuckCount = 0;
       S.af.lastHeight = 0;
@@ -1602,32 +1773,56 @@
       document.getElementById('xuf-tab-af')?.classList.add('xuf-tab-active');
       document.getElementById('xuf-tab-uf')?.classList.remove('xuf-tab-active');
 
-      UI.af.showLoading(0);
-      this._doFollowerLoad();
+      UI.af.showConfig();
     },
 
-    async _doFollowerLoad() {
-      await SCRAPER.scanFollowers(count => UI.af.updateLoading(count));
+    /**
+     * Carga exactamente `targetCount` seguidores.
+     * Si hay menos disponibles, muestra advertencia y espera respuesta del usuario.
+     */
+    async loadFollowers(targetCount) {
+      S.af.targetCount = targetCount;
+      S.af.candidates  = [];
+      S.af.seen.clear();
+      S.af.scanDone    = false;
+      S.af.stuckCount  = 0;
+      S.af.lastHeight  = 0;
+      S.running        = true;
+      S.stop           = false;
+      S.af.phase       = 'loading';
+
+      UI.af.showLoading(0, targetCount);
+
+      const loaded = await SCRAPER.scanFollowers(targetCount, (n, t) => {
+        UI.af.updateLoading(n, t);
+      });
 
       if (S.stop) { CTRL.backToDashboard(); return; }
 
+      // Si la lista se agoto antes de alcanzar el target → advertencia
+      if (S.af.scanDone && loaded < targetCount) {
+        S.running = false;
+        const proceed = await UI.af.showCountWarning(loaded, targetCount);
+        if (!proceed) {
+          S.af.phase = 'config';
+          UI.af.showConfig();
+          return;
+        }
+      }
+
       S.running  = false;
       S.af.phase = 'results';
+
+      // Pre-seleccionar todos los cargados
+      S.af.selected.clear();
+      S.af.candidates.forEach(u => S.af.selected.add(u.username));
+
       UI.af.showResults(S.af.candidates);
     },
 
-    /** Carga el siguiente chunk de seguidores */
-    loadMoreFollowers() {
-      if (S.af.scanDone) return;
-      S.running = true;
-      UI.af.showLoading(S.af.candidates.length);
-      this._doFollowerLoad();
-    },
-
+    /** Ejecuta follows sobre todos los usuarios seleccionados (sin limite) */
     runAutoFollow() {
-      const queue = S.af.candidates
-        .filter(u => S.af.selected.has(u.username))
-        .slice(0, CFG.AF_MAX_PER_BATCH);
+      const queue = S.af.candidates.filter(u => S.af.selected.has(u.username));
       if (!queue.length) return;
 
       S.running  = true;
@@ -1655,7 +1850,7 @@
   CTRL.init();
 
   console.log(
-    '%cUnfollowers-X v2.0 cargado',
+    '%cUnfollowers-X v2.1 cargado',
     'color:#484848;font-weight:bold;font-size:13px'
   );
 
