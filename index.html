@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="Herramienta de automatizacion del navegador para gestionar no-mutuos y seguir usuarios en masa en X. Dashboard bidireccional con Modulo Unfollower y Modulo Auto-Follow." />
-  <title>Unfollowers-X v2.0 — Dashboard Bidireccional para X</title>
+  <title>Unfollowers-X V2.2 — Dashboard Bidireccional para X</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -14,7 +14,7 @@
     <div class="container nav-inner">
       <div class="nav-left">
         <span class="nav-logo">Unfollowers-X</span>
-        <span class="nav-badge">v2.0</span>
+        <span class="nav-badge">V2.2</span>
       </div>
       <nav class="nav-links">
         <a href="#modules"      class="nav-link">Modulos</a>
@@ -36,7 +36,7 @@
     <!-- ── HERO ───────────────────────────────────────────────── -->
     <section class="hero">
       <div class="container hero-inner">
-        <div class="hero-badge">v2.0 — Dashboard Bidireccional</div>
+        <div class="hero-badge">V2.2 — Dashboard Bidireccional</div>
         <h1 class="hero-title">
           Unfollower y Auto-Follow<br />para X en un solo script
         </h1>
@@ -62,7 +62,7 @@
             <span class="preview-url">x.com/usuario/following</span>
           </div>
           <div class="preview-nav">
-            <span class="preview-brand">UNFOLLOWERS-X V2.0</span>
+            <span class="preview-brand">UNFOLLOWERS-X V2.2</span>
             <div class="preview-tabs">
               <div class="preview-tab preview-tab-active">Modulo Unfollower</div>
               <div class="preview-tab preview-tab-off">Modulo Auto-Follow</div>
@@ -108,7 +108,7 @@
               <li>Escaneo invisible: scroll automatico detras del overlay</li>
               <li>Detecta todos los no-mutuos sin limite de usuarios</li>
               <li>Tabla con checkboxes para seleccion granular</li>
-              <li>Delays precisos: 10.23 — 64.32 segundos</li>
+              <li>Delays precisos: 5.12 — 32.16 segundos (50% mas rapido que V2.1)</li>
               <li>Cooldown obligatorio cada 10 unfollows: 4-10 minutos</li>
               <li>Sin limite de unfollows por sesion</li>
             </ul>
@@ -120,13 +120,13 @@
             <h3>Modulo Auto-Follow</h3>
             <p class="module-page">Ejecutar en: <code>x.com/@USUARIO/followers</code></p>
             <ul class="module-features">
-              <li>Carga seguidores en chunks de 250 usuarios</li>
-              <li>Boton "Cargar mas" para chunks adicionales</li>
+              <li>Seleccion previa: input + slider sincronizados (1-5000 usuarios)</li>
+              <li>Deteccion automatica de fin de lista con IntersectionObserver</li>
+              <li>Carga automatica si hay menos usuarios que los solicitados</li>
               <li>Tabla con checkboxes para seleccion granular</li>
-              <li>Delays: 45 — 95 segundos entre follows</li>
+              <li>Delays: 22.5 — 47.5 segundos entre follows (50% mas rapido que V2.1)</li>
               <li>Cooldown obligatorio cada 10 follows: 4-10 minutos</li>
-              <li>Maximo 20 follows por lote (regla estricta)</li>
-              <li>Cooldown de 2 horas entre lotes</li>
+              <li>Sin limite de follows por sesion</li>
             </ul>
           </div>
 
@@ -268,8 +268,8 @@
             <div class="antibot-num">01</div>
             <h3>Delays precisos con decimales</h3>
             <p>
-              Unfollower: <strong>10.23 — 64.32s</strong><br />
-              Auto-Follow: <strong>45 — 95s</strong><br />
+              Unfollower: <strong>5.12 — 32.16s</strong><br />
+              Auto-Follow: <strong>22.5 — 47.5s</strong><br />
               Los decimales rompen la periodicidad estadistica detectada por algoritmos anti-bot.
             </p>
           </div>
@@ -283,11 +283,11 @@
           </div>
           <div class="antibot-card">
             <div class="antibot-num">03</div>
-            <h3>Limite de lote en Auto-Follow</h3>
+            <h3>Deteccion automatica de fin de scroll</h3>
             <p>
-              Maximo <strong>20 follows por lote</strong> con cooldown de
-              <strong>2 horas</strong> entre lotes.
-              Mantiene la actividad dentro de umbrales humanos normales.
+              IntersectionObserver detecta el ultimo elemento visible.
+              Validacion de scroll confirma el fin real de la lista
+              sin loops infinitos ni timeouts arbitrarios.
             </p>
           </div>
           <div class="antibot-card">
@@ -405,7 +405,7 @@
   <footer class="footer">
     <div class="container footer-inner">
       <span class="footer-logo">Unfollowers-X</span>
-      <span class="footer-version">v2.0</span>
+      <span class="footer-version">V2.2</span>
       <div class="footer-links">
         <a href="https://github.com/MaximoAmbro/Unfollowers-X" target="_blank" rel="noopener">GitHub</a>
         <a href="https://github.com/MaximoAmbro/Unfollowers-X/blob/main/unfollowers-x.js" target="_blank" rel="noopener">Script</a>

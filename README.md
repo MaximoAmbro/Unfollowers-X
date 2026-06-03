@@ -1,8 +1,8 @@
-# Unfollowers-X V2.1
+# Unfollowers-X V2.2
 
 > Dashboard bidireccional de automatizacion del navegador en JavaScript puro para gestionar cuentas en X (Twitter): detecta no-mutuos y los deja de seguir, o sigue en masa a los seguidores de cualquier perfil. Sin dependencias externas. 100% Vanilla JavaScript.
 
-**Version:** 2.1
+**Version:** 2.2
 **Landing page:** [maximoambro.github.io/Unfollowers-X](https://maximoambro.github.io/Unfollowers-X/)
 
 ---
@@ -24,6 +24,7 @@ La deteccion del modulo disponible es automatica segun la URL activa en el naveg
 - **V1.2** — Mascara full-screen + DOM Scraping invisible
 - **V2.0** — Modulos bidireccionales (Unfollower + Auto-Follow con limites de lote)
 - **V2.1** — Auto-Follow rediseñado con seleccion previa (1-5000 usuarios), sin limites de follows, estimado dinamico de tiempo
+- **V2.2** — Tiempos reducidos 50% en delays de click, IntersectionObserver para deteccion automatica de fin de scroll, carga automatica sin confirmacion cuando hay menos usuarios disponibles
 
 ---
 
@@ -31,26 +32,29 @@ La deteccion del modulo disponible es automatica segun la URL activa en el naveg
 
 ### Modulo Unfollower
 - Escaneo invisible con scroll automatico detras del overlay full-screen
+- IntersectionObserver detecta fin de lista automaticamente (sin endless loop)
 - Detecta no-mutuos leyendo el badge "Te sigue" / "Follows you" en el DOM
 - Tabla interactiva con checkboxes para seleccion granular
 - Sin limite de unfollows por sesion (el usuario decide cuando parar)
-- Delays precisos con decimales: 10.23 — 64.32 segundos
+- Delays precisos con decimales: 5.12 — 32.16 segundos (50% mas rapido que V2.1)
 - Cooldown obligatorio cada 10 unfollows: 4-10 minutos aleatorio
 
-### Modulo Auto-Follow (V2.1)
+### Modulo Auto-Follow (V2.2)
 - Pantalla de configuracion previa: input numerico + slider sincronizados (rango 1-5000)
-- Estimado dinamico de tiempo calculado en cada keystroke: "250 usuarios = 7h 47m"
-- Carga EXACTAMENTE la cantidad seleccionada; avisa si hay menos disponibles
+- Estimado dinamico de tiempo calculado en cada keystroke: "250 usuarios = aprox. 3h 54m"
+- IntersectionObserver detecta fin de lista automaticamente con validacion de scroll
+- Si hay menos usuarios disponibles que los solicitados: carga automatica sin dialogo
 - Contador en tiempo real durante la carga: "Cargando usuario 125 de 250..."
+- Feedback "Validando si hay mas usuarios..." durante la confirmacion de fin de lista
 - Tabla scrolleable con todos los usuarios, checkboxes, "Seleccionar Todo" / "Deseleccionar Todo"
 - Sin limite de follows por sesion: sigue a todos los seleccionados en una sola sesion
-- Delays: 45-95 segundos entre follows
+- Delays: 22.5-47.5 segundos entre follows (50% mas rapido que V2.1)
 - Cooldown obligatorio cada 10 follows: 4-10 minutos aleatorio
-- Contador regresivo en tiempo real: "Siguiendo usuario 1 de 250... Espera 62s"
+- Contador regresivo en tiempo real: "Siguiendo usuario 1 de 250... Espera 31s"
 - Boton Cancelar disponible en todo momento; resumen final simple al completar
 
 ### Dashboard
-- Titulo "Unfollowers-X V2.1" visible y centrado en la barra superior
+- Titulo "Unfollowers-X V2.2" visible y centrado en la barra superior
 - Deteccion automatica de URL: habilita el modulo correcto segun la pagina activa
 - Modulos mutuamente excluyentes: uno debe completarse antes de acceder al otro
 - Re-deteccion de pagina sin cerrar el script
@@ -104,10 +108,10 @@ En lugar de guardar referencias a elementos del DOM durante el escaneo (invalida
 ### Nivel 1: Delays precisos con decimales
 
 ```javascript
-// Unfollower: 10.23 — 64.32 segundos (decimal preciso)
+// Unfollower: 5.12 — 32.16 segundos (decimal preciso, 50% mas rapido que V2.1)
 const delayMs = CFG.UF_DELAY_MIN + Math.random() * (CFG.UF_DELAY_MAX - CFG.UF_DELAY_MIN);
 
-// Auto-Follow: 45 — 95 segundos
+// Auto-Follow: 22.5 — 47.5 segundos (50% mas rapido que V2.1)
 const delayMs = rndInt(CFG.AF_DELAY_MIN, CFG.AF_DELAY_MAX);
 ```
 
@@ -138,7 +142,24 @@ Los bots hacen clic directo. El script simula hover con pausa variable antes de 
 
 Delays de 500ms a 2s entre scrolls evitan patrones de scroll mecanico.
 
-### Nivel 5: Timeout global de sesion
+### Nivel 5: Deteccion automatica de fin de scroll (V2.2)
+
+IntersectionObserver reemplaza el sistema de stuck-count para detectar el fin de lista:
+
+1. Observa dinamicamente el ultimo `[data-testid="UserCell"]` del DOM
+2. Cuando entra en viewport (threshold 50%), espera 5 segundos
+3. Si no aparecen nuevos usuarios, ejecuta scroll validation: baja media pagina
+4. Si el scroll no produjo movimiento = fin de lista confirmado
+5. Si hay movimiento = todavia hay contenido, reintentar
+
+```javascript
+// Scroll validation: si scrollBy no mueve la pagina = estamos al final
+const before = window.scrollY;
+window.scrollBy(0, window.innerHeight / 2);
+// Si afterDown === before: no hubo movimiento = fin confirmado
+```
+
+### Nivel 6: Timeout global de sesion
 
 ```javascript
 CFG.TIMEOUT = 2 * 60 * 60 * 1_000; // 2 horas maximas por sesion
@@ -218,16 +239,16 @@ El objeto `CFG` al inicio del script permite ajustar el comportamiento:
 
 ```javascript
 const CFG = {
-  // Unfollower
-  UF_DELAY_MIN:  10_230,   // NO bajar de 8000
-  UF_DELAY_MAX:  64_320,
+  // Unfollower (V2.2 — delays reducidos 50%)
+  UF_DELAY_MIN:  5_115,    // NO bajar de 4000
+  UF_DELAY_MAX:  32_160,
   UF_CD_EVERY:   10,       // cooldown cada N unfollows
   UF_CD_MIN:     4 * 60 * 1_000,
   UF_CD_MAX:     10 * 60 * 1_000,
 
-  // Auto-Follow (V2.1 — sin limite de lote)
-  AF_DELAY_MIN:  45_000,
-  AF_DELAY_MAX:  95_000,
+  // Auto-Follow (V2.2 — sin limite de lote, delays reducidos 50%)
+  AF_DELAY_MIN:  22_500,
+  AF_DELAY_MAX:  47_500,
   AF_CD_EVERY:   10,
   AF_CD_MIN:     4 * 60 * 1_000,
   AF_CD_MAX:     10 * 60 * 1_000,
@@ -266,7 +287,7 @@ El uso de este script puede infringir los [Terminos de Servicio de X (Twitter)](
 
 ---
 
-*Desarrollado como proyecto de portfolio — Vanilla JavaScript — DOM Automation — 2025*
+*Desarrollado como proyecto de portfolio — Vanilla JavaScript — DOM Automation — 2025-2026*
 
 ---
 

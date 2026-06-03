@@ -1,6 +1,6 @@
 /**
  * =================================================================
- *  Unfollowers-X  v2.1
+ *  Unfollowers-X  V2.2
  *  Dashboard Bidireccional: Unfollower + Auto-Follow
  *  Vanilla JavaScript — Sin dependencias externas
  * =================================================================
@@ -26,15 +26,15 @@
   // =================================================================
   const CFG = {
     // Unfollower — delays entre acciones (ms, con decimales precisos)
-    UF_DELAY_MIN:  10_230,          // 10.23 segundos
-    UF_DELAY_MAX:  64_320,          // 64.32 segundos
+    UF_DELAY_MIN:  5_115,           // 5.12 segundos (50% de V2.1)
+    UF_DELAY_MAX:  32_160,          // 32.16 segundos (50% de V2.1)
     UF_CD_EVERY:   10,              // cooldown cada N unfollows
     UF_CD_MIN:     4  * 60 * 1_000, // 4 minutos
     UF_CD_MAX:     10 * 60 * 1_000, // 10 minutos
 
-    // Auto-Follow — delays entre acciones (sin limite de lote desde V2.1)
-    AF_DELAY_MIN: 45_000,
-    AF_DELAY_MAX: 95_000,
+    // Auto-Follow — delays entre acciones
+    AF_DELAY_MIN: 22_500,           // 22.5 segundos (50% de V2.1)
+    AF_DELAY_MAX: 47_500,           // 47.5 segundos (50% de V2.1)
     AF_CD_EVERY:  10,
     AF_CD_MIN:    4  * 60 * 1_000,
     AF_CD_MAX:    10 * 60 * 1_000,
@@ -211,80 +211,162 @@
   // MODULO: SCRAPER
   // Responsabilidad: desplazar la pagina en background (el overlay
   // cubre el scroll) y capturar UserCells del DOM.
+  // IntersectionObserver detecta el fin de lista automaticamente.
   // =================================================================
   const SCRAPER = {
+
+    /**
+     * Construye la logica de deteccion de fin de scroll compartida.
+     * Retorna una Promise que resuelve cuando el fin de lista es confirmado
+     * y una funcion getter para saber si esta en proceso de validacion.
+     *
+     * Algoritmo:
+     * 1. Observer observa el ultimo UserCell
+     * 2. Al entrar en viewport: espera 5s sin nuevos usuarios
+     * 3. Scroll validation: baja media pagina, si no se mueve = FIN
+     * 4. Si se mueve: hay mas contenido, reintentar
+     */
+    _buildEndDetector(getLoaded, targetCount, labelId) {
+      let listEnd      = false;
+      let isValidating = false;
+
+      const endDetected = new Promise(resolve => {
+        let observer        = null;
+        let validationTimer = null;
+        let interval        = null;
+
+        const cleanup = () => {
+          if (observer)        { observer.disconnect(); observer = null; }
+          if (validationTimer) { clearTimeout(validationTimer); validationTimer = null; }
+          if (interval)        { clearInterval(interval); interval = null; }
+        };
+
+        const confirmEnd = () => {
+          cleanup(); listEnd = true; isValidating = false; resolve();
+        };
+
+        const tryAgain = () => {
+          isValidating = false; updateObserver();
+        };
+
+        const performValidationScroll = () => {
+          const before = window.scrollY;
+          window.scrollBy(0, window.innerHeight / 2);
+          setTimeout(() => {
+            const afterDown = window.scrollY;
+            window.scrollBy(0, -(window.innerHeight / 2));
+            setTimeout(() => {
+              // Si el scroll hacia abajo no movo la pagina = fin confirmado
+              Math.abs(afterDown - before) < 5 ? confirmEnd() : tryAgain();
+            }, 500);
+          }, 500);
+        };
+
+        const startValidation = countBefore => {
+          if (validationTimer) clearTimeout(validationTimer);
+          const sub = document.getElementById(labelId);
+          if (sub) sub.textContent = 'Validando si hay mas usuarios...';
+          validationTimer = setTimeout(() => {
+            const countAfter = document.querySelectorAll('[data-testid="UserCell"]').length;
+            countAfter === countBefore ? performValidationScroll() : tryAgain();
+          }, 5_000);
+        };
+
+        const updateObserver = () => {
+          if (isValidating || S.stop) return;
+          if (targetCount !== null && getLoaded() >= targetCount) return;
+          if (observer) observer.disconnect();
+          const cells = document.querySelectorAll('[data-testid="UserCell"]');
+          if (!cells.length) return;
+          observer = new IntersectionObserver(entries => {
+            entries.forEach(entry => {
+              if (entry.isIntersecting && !isValidating) {
+                isValidating = true;
+                startValidation(document.querySelectorAll('[data-testid="UserCell"]').length);
+              }
+            });
+          }, { root: null, rootMargin: '0px', threshold: 0.5 });
+          observer.observe(cells[cells.length - 1]);
+        };
+
+        updateObserver();
+        interval = setInterval(() => {
+          if (S.stop || listEnd) { cleanup(); resolve(); return; }
+          if (targetCount !== null && getLoaded() >= targetCount) { cleanup(); resolve(); return; }
+          updateObserver();
+        }, 500);
+      });
+
+      return {
+        endDetected,
+        isValidating: () => isValidating,
+        isListEnd:    () => listEnd,
+      };
+    },
+
     /**
      * Escaneo completo de la pagina /following.
-     * Reinicia desde el top y lee todos los UserCells que no sean mutuos.
+     * IntersectionObserver detecta fin de lista automaticamente.
      */
     async scanUnfollowers(onProgress) {
       window.scrollTo(0, 0);
       await sleep(1_200);
       const seen = new Set();
-      let stuck = 0, lastH = 0;
 
-      while (stuck < CFG.SC_MAX_STUCK && !S.stop) {
+      const detector = this._buildEndDetector(() => seen.size, null, 'xuf-scan-sub');
+
+      while (!detector.isListEnd() && !S.stop) {
         if (expired()) break;
         document.querySelectorAll('[data-testid="UserCell"]').forEach(cell => {
           const { username, displayName } = DETECT.userInfo(cell);
           if (!username || seen.has(username)) return;
           seen.add(username);
-          if (!DETECT.followsBack(cell)) {
-            S.uf.nonMutuals.push({ username, displayName });
-          }
+          if (!DETECT.followsBack(cell)) S.uf.nonMutuals.push({ username, displayName });
         });
         onProgress(seen.size, S.uf.nonMutuals.length);
-        window.scrollBy(0, CFG.SC_STEP);
+        if (!detector.isValidating()) window.scrollBy(0, CFG.SC_STEP);
         await sleep(rndInt(CFG.SC_MIN, CFG.SC_MAX));
-        const nh = document.body.scrollHeight;
-        stuck = nh === lastH ? stuck + 1 : 0;
-        lastH = nh;
       }
+
+      await detector.endDetected;
     },
 
     /**
-     * Carga EXACTAMENTE targetCount seguidores desde /followers.
-     * Continua desde la posicion de scroll actual (no reinicia al top).
-     *
-     * Para garantizar la cantidad exacta:
-     * - Se detiene al llegar al target, incluso a mitad de un pass del DOM
-     * - Si el scrollHeight no cambia N veces → lista agotada (scanDone = true)
+     * Carga exactamente targetCount seguidores desde /followers.
+     * IntersectionObserver detecta fin de lista automaticamente.
      *
      * @param {number} targetCount - Cantidad exacta a cargar
      * @param {function(number, number): void} onProgress - (cargados, target)
      * @returns {Promise<number>} Cantidad real de usuarios cargados
      */
     async scanFollowers(targetCount, onProgress) {
-      S.af.stuckCount = 0;
-      let loaded = S.af.candidates.length; // continua desde donde quedo
+      let loaded = S.af.candidates.length;
 
-      while (loaded < targetCount && S.af.stuckCount < CFG.SC_MAX_STUCK && !S.stop) {
+      const detector = this._buildEndDetector(() => loaded, targetCount, 'xuf-af-sub');
+
+      while (loaded < targetCount && !detector.isListEnd() && !S.stop) {
         if (expired()) break;
 
         document.querySelectorAll('[data-testid="UserCell"]').forEach(cell => {
-          if (loaded >= targetCount) return; // limite exacto
+          if (loaded >= targetCount) return;
           const { username, displayName } = DETECT.userInfo(cell);
           if (!username || S.af.seen.has(username)) return;
-          if (!DETECT.followBtn(cell)) return; // ya seguido o no followable
+          if (!DETECT.followBtn(cell)) return;
           S.af.seen.add(username);
           S.af.candidates.push({ username, displayName });
           loaded++;
         });
 
         onProgress(loaded, targetCount);
-
         if (loaded >= targetCount) break;
 
-        window.scrollBy(0, CFG.SC_STEP);
+        if (!detector.isValidating()) window.scrollBy(0, CFG.SC_STEP);
         await sleep(rndInt(CFG.SC_MIN, CFG.SC_MAX));
-
-        const nh = document.body.scrollHeight;
-        S.af.stuckCount = nh === S.af.lastHeight ? S.af.stuckCount + 1 : 0;
-        S.af.lastHeight  = nh;
       }
 
-      // scanDone = true cuando la lista se agoto antes de alcanzar el target
-      S.af.scanDone = loaded < targetCount && S.af.stuckCount >= CFG.SC_MAX_STUCK;
+      await detector.endDetected;
+
+      S.af.scanDone = loaded < targetCount && detector.isListEnd();
       return loaded;
     },
   };
@@ -1058,7 +1140,7 @@
       this._el.innerHTML = `
         <div class="xuf-nav">
           <div class="xuf-nav-top">
-            <span class="xuf-brand">Unfollowers-X <span class="xuf-ver">V2.1</span></span>
+            <span class="xuf-brand">Unfollowers-X <span class="xuf-ver">V2.2</span></span>
             <button class="xuf-close" id="xuf-close-btn">Cerrar</button>
           </div>
           <div class="xuf-tabs">
@@ -1420,9 +1502,9 @@
         const est    = document.getElementById('xuf-af-est');
 
         function calcEstimate(n) {
-          // Delay promedio: (45+95)/2 = 70s entre follows
+          // Delay promedio: (22.5+47.5)/2 = 35s entre follows
           // Cooldown promedio: (4+10)/2 = 7 min cada 10 follows
-          const total = n * 70 + Math.floor(n / 10) * 7 * 60;
+          const total = n * 35 + Math.floor(n / 10) * 7 * 60;
           const h = Math.floor(total / 3600);
           const m = Math.floor((total % 3600) / 60);
           return `${n} usuarios = ${h}h ${m}m`;
@@ -1486,39 +1568,15 @@
         if (lbl) lbl.textContent  = count + ' / ' + target;
       },
 
-      /**
-       * FASE 1b — Advertencia si hay menos usuarios que el target.
-       * Devuelve una Promise que resuelve true (continuar) o false (volver).
-       */
-      showCountWarning(found, requested) {
-        UI._setBodyMode('center');
-        const b = UI._body();
-        if (!b) return Promise.resolve(false);
-        return new Promise(resolve => {
-          b.innerHTML = `
-            <div class="xuf-card xuf-anim">
-              <p class="xuf-heading">Seguidores disponibles</p>
-              <p class="xuf-sub">
-                Solo hay <strong style="color:#b8b8b8">${found}</strong> seguidores
-                disponibles para seguir en este perfil (solicitaste ${requested}).
-              </p>
-              <p class="xuf-sub">Continuar con los ${found} disponibles?</p>
-              <div style="display:flex;gap:8px">
-                <button class="xuf-btn xuf-btn-ghost"   id="xuf-warn-back">Volver a configuracion</button>
-                <button class="xuf-btn xuf-btn-primary" id="xuf-warn-ok">Continuar con ${found}</button>
-              </div>
-            </div>
-          `;
-          document.getElementById('xuf-warn-ok').onclick   = () => resolve(true);
-          document.getElementById('xuf-warn-back').onclick = () => resolve(false);
-        });
-      },
-
       /** FASE 2 — Tabla interactiva con todos los usuarios cargados */
-      showResults(candidates) {
+      showResults(candidates, requested) {
         UI._setBodyMode('panel');
         const b = UI._body();
         if (!b) return;
+
+        const headerMsg = (requested && requested > candidates.length)
+          ? `Cargados ${candidates.length} usuarios de ${requested} solicitados`
+          : 'Seguidores listos para seguir';
 
         const rows = candidates.map(({ username, displayName }) => {
           const ini   = (displayName[0] || username[0] || '?').toUpperCase();
@@ -1543,7 +1601,7 @@
         b.innerHTML = `
           <div class="xuf-panel xuf-anim">
             <div class="xuf-panel-hd">
-              <span class="xuf-sub">Seguidores listos para seguir</span>
+              <span class="xuf-sub">${headerMsg}</span>
               <div class="xuf-panel-hd-r">
                 <span class="xuf-sel-lbl">
                   <strong id="xuf-af-sel-n">${candidates.length}</strong>
@@ -1559,7 +1617,7 @@
               <table class="xuf-table"><tbody>${rows}</tbody></table>
             </div>
             <div class="xuf-panel-ft">
-              <p class="xuf-ft-note">Delays 45-95s — Cooldown cada ${CFG.AF_CD_EVERY} follows: 4-10 min</p>
+              <p class="xuf-ft-note">Delays 22.5-47.5s — Cooldown cada ${CFG.AF_CD_EVERY} follows: 4-10 min</p>
               <button class="xuf-btn xuf-btn-primary" id="xuf-af-run">
                 Ejecutar Follows
               </button>
@@ -1759,7 +1817,7 @@
     },
 
     // -----------------------------------------------------------------
-    // Auto-Follow — flujo completo (V2.1)
+    // Auto-Follow — flujo completo (V2.2)
     // -----------------------------------------------------------------
 
     /** Muestra la pantalla de configuracion (paso 0) */
@@ -1773,8 +1831,6 @@
       S.af.count      = 0;
       S.af.phase      = 'config';
       S.af.scanDone   = false;
-      S.af.stuckCount = 0;
-      S.af.lastHeight = 0;
 
       document.getElementById('xuf-tab-af')?.classList.add('xuf-tab-active');
       document.getElementById('xuf-tab-uf')?.classList.remove('xuf-tab-active');
@@ -1784,15 +1840,13 @@
 
     /**
      * Carga exactamente `targetCount` seguidores.
-     * Si hay menos disponibles, muestra advertencia y espera respuesta del usuario.
+     * Si hay menos disponibles, carga lo que haya sin dialogo de confirmacion.
      */
     async loadFollowers(targetCount) {
       S.af.targetCount = targetCount;
       S.af.candidates  = [];
       S.af.seen.clear();
       S.af.scanDone    = false;
-      S.af.stuckCount  = 0;
-      S.af.lastHeight  = 0;
       S.running        = true;
       S.stop           = false;
       S.af.phase       = 'loading';
@@ -1805,17 +1859,6 @@
 
       if (S.stop) { CTRL.backToDashboard(); return; }
 
-      // Si la lista se agoto antes de alcanzar el target → advertencia
-      if (S.af.scanDone && loaded < targetCount) {
-        S.running = false;
-        const proceed = await UI.af.showCountWarning(loaded, targetCount);
-        if (!proceed) {
-          S.af.phase = 'config';
-          UI.af.showConfig();
-          return;
-        }
-      }
-
       S.running  = false;
       S.af.phase = 'results';
 
@@ -1823,7 +1866,8 @@
       S.af.selected.clear();
       S.af.candidates.forEach(u => S.af.selected.add(u.username));
 
-      UI.af.showResults(S.af.candidates);
+      // Si hay menos usuarios que los solicitados, cargar automaticamente sin confirmar
+      UI.af.showResults(S.af.candidates, targetCount);
     },
 
     /** Ejecuta follows sobre todos los usuarios seleccionados (sin limite) */
@@ -1856,7 +1900,7 @@
   CTRL.init();
 
   console.log(
-    '%cUnfollowers-X v2.1 cargado',
+    '%cUnfollowers-X V2.2 cargado',
     'color:#484848;font-weight:bold;font-size:13px'
   );
 
